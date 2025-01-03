@@ -41,11 +41,13 @@ INSTALLED_APPS = [
     'rest_framework',
     'users_app',
     'content_app',
+    "debug_toolbar",
 ]
 
 AUTH_USER_MODEL = 'users_app.UserProfile'
 
 MIDDLEWARE = [
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -53,6 +55,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+INTERNAL_IPS = [
+    "127.0.0.1",
 ]
 
 ROOT_URLCONF = 'videoflix_backend_app.urls'
@@ -75,6 +81,17 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'videoflix_backend_app.wsgi.application'
 
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://django@localhost:6379/0",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            # "PASSWORD": "mysecret"
+        },
+        "KEY_PREFIX": "videoflix"
+    }
+}
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
@@ -123,7 +140,7 @@ USE_TZ = True
 
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATIC_URL = 'static/'
-STATICFILES_DIRS  = [
+STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
 ]
 

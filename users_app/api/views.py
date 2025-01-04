@@ -1,4 +1,3 @@
-from django.utils.http import base36_to_int
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
@@ -8,8 +7,7 @@ from rest_framework import status
 
 from django.core.mail import send_mail
 from django.contrib.auth import authenticate
-from django.utils.http import int_to_base36
-from django.urls import reverse
+from django.utils.http import int_to_base36, base36_to_int
 from django.conf import settings
 
 from users_app.models import UserProfile
@@ -166,6 +164,22 @@ class UserLoginView(APIView):
 
 
 class UserForgotPasswordView(APIView):
+    """
+    UserForgotPasswordView handles the password reset request for a user.
+    Methods:
+        post(request):
+            Handles POST requests to initiate the password reset process.
+            - Retrieves the email from the request data.
+            - If the email is not provided, returns a 400 Bad Request response.
+            - If the email exists in the UserProfile database, generates a reset token and UID.
+            - Constructs a password reset URL and sends it to the user's email.
+            - If the email does not exist, returns a generic success message to avoid revealing user information.
+            Args:
+                request (Request): The HTTP request object containing the email.
+            Returns:
+                Response: A response indicating whether the reset link was sent or not.
+    """
+
     def post(self, request):
         email = request.data.get('email')
         if not email:
@@ -194,6 +208,23 @@ class UserForgotPasswordView(APIView):
 
 
 class UserResetPasswordView(APIView):
+    """
+    View to handle user password reset requests.
+    Methods:
+    -------
+    post(request):
+        Handles POST requests to reset the user's password.
+    Parameters:
+    ----------
+    request : Request
+        The HTTP request object containing 'uid', 'token', and 'new_password' in the request data.
+    Returns:
+    -------
+    Response
+        A Response object with a success message if the password is reset successfully,
+        or an error message if any validation fails.
+    """
+
     def post(self, request):
         uid = request.data.get('uid')
         token = request.data.get('token')

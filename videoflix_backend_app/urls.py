@@ -24,7 +24,7 @@ from debug_toolbar.toolbar import debug_toolbar_urls
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users/', include('users_app.api.urls')),
-    # path('api/content/', include('content_app.api.urls')),
+    path('api/content/', include('content_app.api.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT) \
     + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT) \
     + debug_toolbar_urls()

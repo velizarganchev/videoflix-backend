@@ -12,7 +12,7 @@ class GetContentItemsView(APIView):
     def get(self, request):
         content = Video.objects.all()
         serializer = VideoSerializer(content, many=True)
-        return Response({'content': serializer.data})
+        return Response(serializer.data)
 
 
 class GetSingleContentItemView(APIView):
@@ -21,4 +21,4 @@ class GetSingleContentItemView(APIView):
     def get(self, request, pk):
         content = Video.objects.get(pk=pk)
         serializer = VideoSerializer(content)
-        return Response({'content': serializer.data})
+        return Response(serializer.data)

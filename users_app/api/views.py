@@ -89,7 +89,7 @@ class UserRegisterView(APIView):
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
             )
-            return Response({'message': 'Please check your email to confirm registration.'}, status=status.HTTP_201_CREATED)
+            return Response({'message': 'Please check your email to confirm registration.', 'created': True}, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

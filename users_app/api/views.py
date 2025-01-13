@@ -23,13 +23,13 @@ class GetUserProfilesView(APIView):
             Handles the GET request to retrieve all user profiles.
             - Retrieves all user profiles from the database.
             - Serializes the user profiles.
-            - Returns the serialized user profiles with HTTP 200 status.
+            - Returns only the emails of the user profiles with HTTP 200 status.
     """
 
     def get(self, request):
         users = UserProfile.objects.all()
-        serializer = UserProfileSerializer(users, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        emails = users.values_list('email', flat=True)
+        return Response({'emails': emails}, status=status.HTTP_200_OK)
 
 
 class GetSingleUserProfileView(APIView):

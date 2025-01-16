@@ -1,3 +1,5 @@
+from rest_framework.permissions import AllowAny
+from django.http import HttpResponseRedirect
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
@@ -15,9 +17,9 @@ from .serializers import UserProfileSerializer
 
 
 class GetUserProfilesView(APIView):
-    permission_classes = [IsAuthenticated]
     """
     GetUserProfilesView handles the retrieval of all user profiles.
+
     Methods:
         get(request):
             Handles the GET request to retrieve all user profiles.
@@ -28,8 +30,8 @@ class GetUserProfilesView(APIView):
 
     def get(self, request):
         users = UserProfile.objects.all()
-        emails = users.values_list('email', flat=True)
-        return Response({'emails': emails}, status=status.HTTP_200_OK)
+        emails = list(users.values_list('email', flat=True))
+        return Response(emails, status=status.HTTP_200_OK)
 
 
 class GetSingleUserProfileView(APIView):
@@ -58,6 +60,7 @@ class GetSingleUserProfileView(APIView):
 
 
 class UserRegisterView(APIView):
+    permission_classes = [AllowAny]
     """
     User registration view that handles user sign-up and sends a confirmation email.
     Methods:
@@ -78,9 +81,7 @@ class UserRegisterView(APIView):
 
             hashed_id = int_to_base36(user.id)
             token = Token.objects.get(user=user).key
-
-            confirmation_url = f"{settings.FRONTEND_REGISTER_URL}?uid={
-                hashed_id}&token={token}"
+            confirmation_url = f"{settings.URL}/users/confirm/?uid={hashed_id}&token={token}"
 
             send_mail(
                 subject='Confirm Your Email',
@@ -91,25 +92,28 @@ class UserRegisterView(APIView):
             )
             return Response({'message': 'Please check your email to confirm registration.', 'created': True}, status=status.HTTP_201_CREATED)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class UserConfirmationView(APIView):
     """
-    UserConfirmationView handles the confirmation of a user's email address via a token.
+    UserConfirmationView handles the confirmation of user registration.
     Methods:
-        get(request, uid, token):
-            Handles GET requests to confirm a user's email address.
+        get(request):
+            Handles the GET request to confirm a user's registration.
             Args:
-                request: The HTTP request object.
-                uid: The user's ID in base36 format.
-                token: The token associated with the user.
-            Returns:
-                Response: A Response object with a success message and new token if the email is confirmed,
-                          or an error message if the token is invalid or expired, or if the user ID is invalid.
+                request: The HTTP request object containing 'uid' and 'token' as query parameters.
+            - Validates the token and user ID.
+            - Activates the user account if the token and user ID are valid.
+            - Redirects the user to the frontend login URL upon successful confirmation.
+            - Returns error messages with appropriate HTTP status codes if validation fails.
     """
 
-    def get(self, request, uid, token):
+    def get(self, request):
+        uid = request.query_params.get('uid')
+        token = request.query_params.get('token')
+
+        if not uid or not token:
+            return Response({'error': 'Missing uid or token.'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             user_token = Token.objects.get(key=token)
             user = user_token.user
@@ -125,11 +129,11 @@ class UserConfirmationView(APIView):
             return Response({'error': 'User ID does not match the token.'}, status=status.HTTP_400_BAD_REQUEST)
 
         user_token.delete()
-        new_token, created = Token.objects.get_or_create(user=user)
+        Token.objects.get_or_create(user=user)
         user.is_active = True
         user.save()
 
-        return Response({'message': 'Email successfully confirmed. You can now log in.', 'token': new_token.key}, status=status.HTTP_200_OK)
+        return HttpResponseRedirect(settings.FRONTEND_LOGIN_URL)
 
 
 class UserLoginView(APIView):

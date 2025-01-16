@@ -14,6 +14,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': True},
+            'username': {'required': False},
         }
 
     def get_token(self, obj):
@@ -31,6 +32,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         email = validated_data.pop('email')
         password = validated_data.pop('password')
         is_active = validated_data.pop('is_active', False)
+
         user = UserProfile.objects.create_user(
             username=email, email=email, password=password, is_active=is_active, **validated_data
         )

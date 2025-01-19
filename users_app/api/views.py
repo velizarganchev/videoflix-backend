@@ -1,3 +1,8 @@
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.contrib.auth import authenticate
+from django.utils.http import int_to_base36, base36_to_int
+from django.conf import settings
 from rest_framework.permissions import AllowAny
 from django.http import HttpResponseRedirect
 from rest_framework.views import APIView
@@ -7,25 +12,19 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework import status
 
-from django.core.mail import send_mail
-from django.contrib.auth import authenticate
-from django.utils.http import int_to_base36, base36_to_int
-from django.conf import settings
-
-from users_app.models import UserProfile
+from ..models import UserProfile
 from .serializers import UserProfileSerializer
 
 
 class GetUserProfilesView(APIView):
     """
-    GetUserProfilesView handles the retrieval of all user profiles.
+    Handles the retrieval of all user profiles.
 
     Methods:
-        get(request):
-            Handles the GET request to retrieve all user profiles.
-            - Retrieves all user profiles from the database.
-            - Serializes the user profiles.
-            - Returns only the emails of the user profiles with HTTP 200 status.
+        get(request): Retrieves all user profiles and returns a list of their emails.
+
+    Returns:
+        Response: A JSON response containing a list of email addresses and HTTP 200 status.
     """
 
     def get(self, request):
@@ -37,17 +36,21 @@ class GetUserProfilesView(APIView):
 class GetSingleUserProfileView(APIView):
     permission_classes = [IsAuthenticated]
     """
-    GetSingleUserProfileView handles the retrieval of a single user profile.
+    Retrieves a single user profile by its ID.
+
+    Permissions:
+        IsAuthenticated: Only authenticated users can access this view.
+
     Methods:
-        get(request, pk):
-            Handles the GET request to retrieve a single user profile.
-            Args:
-                request: The HTTP request object.
-                pk: The ID of the user profile to retrieve.
-            - Retrieves the user profile from the database using the user ID.
-            - Serializes the user profile.
-            - Returns the serialized user profile with HTTP 200 status.
-            - Returns an error message with HTTP 404 status if the user profile does not exist.
+        get(request, pk): Retrieves a user profile for the provided ID.
+
+    Args:
+        request (Request): The HTTP request object.
+        pk (int): The primary key (ID) of the user profile.
+
+    Returns:
+        Response: Serialized user profile data with HTTP 200 if found.
+        Response: Error message with HTTP 404 if the profile does not exist.
     """
 
     def get(self, request, pk):
@@ -62,49 +65,71 @@ class GetSingleUserProfileView(APIView):
 class UserRegisterView(APIView):
     permission_classes = [AllowAny]
     """
-    User registration view that handles user sign-up and sends a confirmation email.
+    Handles user registration and sends a confirmation email.
+
+    Permissions:
+        AllowAny: Open to all users, regardless of authentication.
+
     Methods:
-        post(request):
-            Handles the POST request to register a new user.
-            - Validates the user data using UserProfileSerializer.
-            - If valid, saves the user with is_active set to False.
-            - Generates a confirmation URL with a hashed user ID and token.
-            - Sends a confirmation email to the user with the confirmation URL.
-            - Returns a success message with HTTP 201 status if registration is successful.
-            - Returns validation errors with HTTP 400 status if registration fails.
+        post(request): Validates registration data, creates an inactive user, and sends a confirmation email.
+
+    Args:
+        request (Request): HTTP request with user registration data.
+
+    Returns:
+        Response: User email and HTTP 201 if registration is successful.
+        Response: Validation errors with HTTP 400 if data is invalid.
     """
 
     def post(self, request):
         serializer = UserProfileSerializer(data=request.data)
         if serializer.is_valid():
+            # Save user with inactive status
             user = serializer.save(is_active=False)
 
+            # Generate token and confirmation URL
             hashed_id = int_to_base36(user.id)
             token = Token.objects.get(user=user).key
-            confirmation_url = f"{settings.URL}/users/confirm/?uid={hashed_id}&token={token}"
+            confirmation_url = f"{
+                settings.BACKEND_URL}/users/confirm/?uid={hashed_id}&token={token}"
 
-            send_mail(
-                subject='Confirm Your Email',
-                message=f'Click the link to confirm your registration: {
-                    confirmation_url}',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-            )
-            return Response({'message': 'Please check your email to confirm registration.', 'created': True}, status=status.HTTP_201_CREATED)
+            # Render the email template
+            html_content = render_to_string('../templates/emails/confirmation_email.html', {
+                'user': user.username,
+                'confirmation_url': confirmation_url
+            })
+
+            # Create the email
+            subject = 'Confirm Your Email'
+            from_email = settings.DEFAULT_FROM_EMAIL
+            to_email = [user.email]
+
+            email = EmailMultiAlternatives(
+                subject, "Please confirm your email", from_email, to_email)
+            # Attach the HTML content
+            email.attach_alternative(html_content, "text/html")
+            email.send()
+
+            # Return success response
+            return Response({'email': user.email}, status=status.HTTP_201_CREATED)
+
+        # Return validation errors
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UserConfirmationView(APIView):
     """
-    UserConfirmationView handles the confirmation of user registration.
+    Confirms user registration by validating a token and activating the user account.
+
     Methods:
-        get(request):
-            Handles the GET request to confirm a user's registration.
-            Args:
-                request: The HTTP request object containing 'uid' and 'token' as query parameters.
-            - Validates the token and user ID.
-            - Activates the user account if the token and user ID are valid.
-            - Redirects the user to the frontend login URL upon successful confirmation.
-            - Returns error messages with appropriate HTTP status codes if validation fails.
+        get(request): Validates the UID and token from query parameters and activates the user.
+
+    Args:
+        request (Request): HTTP request containing 'uid' and 'token' as query parameters.
+
+    Returns:
+        HttpResponseRedirect: Redirects to the frontend login URL on successful confirmation.
+        Response: Error message with HTTP 400 if validation fails.
     """
 
     def get(self, request):
@@ -138,18 +163,17 @@ class UserConfirmationView(APIView):
 
 class UserLoginView(APIView):
     """
-    UserLoginView handles user login requests.
+    Authenticates a user and returns their profile data if successful.
+
     Methods:
-        post(request):
-            Authenticates a user based on email and password provided in the request data.
-            Returns a serialized user profile if authentication is successful.
-            Raises ValidationError if email or password is missing or if credentials are invalid.
+        post(request): Authenticates using the provided email and password.
+
     Args:
-        request (Request): The HTTP request object containing user login data.
+        request (Request): HTTP request containing 'email' and 'password'.
+
     Returns:
-        Response: A response object containing the serialized user profile and HTTP status 200 if authentication is successful.
-    Raises:
-        ValidationError: If email or password is missing or if credentials are invalid.
+        Response: Serialized user profile and HTTP 200 if authentication is successful.
+        ValidationError: HTTP 400 if credentials are invalid or missing.
     """
 
     def post(self, request):
@@ -169,19 +193,20 @@ class UserLoginView(APIView):
 
 class UserForgotPasswordView(APIView):
     """
-    UserForgotPasswordView handles the password reset request for a user.
+    Handles password reset requests by sending a reset link to the user's email.
+
     Methods:
-        post(request):
-            Handles POST requests to initiate the password reset process.
-            - Retrieves the email from the request data.
-            - If the email is not provided, returns a 400 Bad Request response.
-            - If the email exists in the UserProfile database, generates a reset token and UID.
-            - Constructs a password reset URL and sends it to the user's email.
-            - If the email does not exist, returns a generic success message to avoid revealing user information.
-            Args:
-                request (Request): The HTTP request object containing the email.
-            Returns:
-                Response: A response indicating whether the reset link was sent or not.
+        post(request): Processes a password reset request by generating a token and sending an email.
+
+    Args:
+        request (Request): HTTP request containing the user's email.
+
+    Returns:
+        Response: A generic success message with HTTP 200, regardless of email existence.
+        Response: Error message with HTTP 400 if the email field is missing.
+
+    Security:
+        Prevents user enumeration by not revealing whether the email exists in the system.
     """
 
     def post(self, request):
@@ -196,14 +221,24 @@ class UserForgotPasswordView(APIView):
             uid = int_to_base36(user.id)
 
             reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={
-                uid}&token={token.key}"
+                uid}&token={token}"
 
-            send_mail(
-                subject='Reset Your Password',
-                message=f'Click the link to reset your password: {reset_url}',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
+            # Render the email template
+            html_content = render_to_string('../templates/emails/reset_password_email.html', {
+                'user': user.username,
+                'reset_url': reset_url,
+            })
+
+            # Send the email
+            subject = 'Reset Your Password'
+            from_email = settings.DEFAULT_FROM_EMAIL
+            recipient_list = [user.email]
+
+            email_message = EmailMultiAlternatives(
+                subject, "Click the link to reset your password.", from_email, recipient_list
             )
+            email_message.attach_alternative(html_content, "text/html")
+            email_message.send()
 
         except UserProfile.DoesNotExist:
             pass
@@ -262,16 +297,20 @@ class UserResetPasswordView(APIView):
 
 class UserLogoutView(APIView):
     """
-    UserLogoutView handles the user logout process.
-    This view requires the user to be authenticated. It attempts to retrieve the
-    authentication token associated with the user making the request and deletes it,
-    effectively logging the user out.
+    Logs out the authenticated user by deleting their token.
+
+    Permissions:
+        IsAuthenticated: Requires the user to be logged in.
+
     Methods:
-        post(request): Handles the POST request to log out the user by deleting their token.
-    Raises:
-        Token.DoesNotExist: If the token does not exist, indicating the user may already be logged out.
+        post(request): Deletes the user's authentication token.
+
+    Args:
+        request (Request): The HTTP request from the logged-in user.
+
     Returns:
-        Response: A response indicating the success or failure of the logout process.
+        Response: Success message with HTTP 200 if logout is successful.
+        Response: Error message with HTTP 400 if the token does not exist.
     """
     permission_classes = [IsAuthenticated]
 

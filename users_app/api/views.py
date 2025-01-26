@@ -29,8 +29,8 @@ class GetUserProfilesView(APIView):
 
     def get(self, request):
         users = UserProfile.objects.all()
-        emails = list(users.values_list('email', flat=True))
-        return Response(emails, status=status.HTTP_200_OK)
+        serializer = UserProfileSerializer(users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class GetSingleUserProfileView(APIView):
@@ -188,7 +188,7 @@ class UserLoginView(APIView):
         if user is None:
             raise ValidationError({'error': 'Invalid credentials.'})
 
-        return Response({'user': UserProfileSerializer(user).data}, status=status.HTTP_200_OK)
+        return Response(UserProfileSerializer(user).data, status=status.HTTP_200_OK)
 
 
 class UserForgotPasswordView(APIView):
@@ -321,4 +321,3 @@ class UserLogoutView(APIView):
             return Response({'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)
         except Token.DoesNotExist:
             return Response({'error': 'Token not found. User may already be logged out.'}, status=status.HTTP_400_BAD_REQUEST)
- 

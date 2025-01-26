@@ -40,10 +40,17 @@ class AddFavoriteVideoView(APIView):
 
             if video in user.favorite_videos.all():
                 user.favorite_videos.remove(video)
-                return Response({"message": "Video removed from favorites"}, status=status.HTTP_200_OK)
+                favorite_videos = user.favorite_videos.values_list(
+                    'id', flat=True)
+                favorite_videos_ids = list(favorite_videos)
+
+                return Response(favorite_videos_ids, status=status.HTTP_200_OK)
 
             user.favorite_videos.add(video)
-            return Response({"message": "Video added to favorites"}, status=status.HTTP_200_OK)
+            favorite_videos = user.favorite_videos.values_list('id', flat=True)
+            favorite_videos_ids = list(favorite_videos)
+
+            return Response(favorite_videos_ids, status=status.HTTP_200_OK)
 
         except Video.DoesNotExist:
             return Response({"message": "Video not found"}, status=status.HTTP_404_NOT_FOUND)

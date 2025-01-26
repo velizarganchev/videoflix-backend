@@ -1,3 +1,4 @@
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -22,3 +23,27 @@ class GetSingleContentItemView(APIView):
         content = Video.objects.get(pk=pk)
         serializer = VideoSerializer(content)
         return Response(serializer.data)
+
+
+class AddFavoriteVideoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        video_id = request.data.get('video_id')
+
+        if not video_id:
+            return Response({'message': 'Video ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            video = Video.objects.get(pk=video_id)
+
+            if video in user.favorite_videos.all():
+                user.favorite_videos.remove(video)
+                return Response({"message": "Video removed from favorites"}, status=status.HTTP_200_OK)
+
+            user.favorite_videos.add(video)
+            return Response({"message": "Video added to favorites"}, status=status.HTTP_200_OK)
+
+        except Video.DoesNotExist:
+            return Response({"message": "Video not found"}, status=status.HTTP_404_NOT_FOUND)

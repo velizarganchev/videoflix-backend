@@ -321,3 +321,4 @@ class UserLogoutView(APIView):
             return Response({'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)
         except Token.DoesNotExist:
             return Response({'error': 'Token not found. User may already be logged out.'}, status=status.HTTP_400_BAD_REQUEST)
+ 

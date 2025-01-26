@@ -15,6 +15,7 @@ class UserProfileAdmin(admin.ModelAdmin):
                 'fields': (
                     'phone',
                     'address',
+                    'favorite_videos',
                 )
             }
         )

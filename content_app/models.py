@@ -44,7 +44,7 @@ class Video(models.Model):
         blank=True, null=True, default=list)  # Default to an empty list
 
     def __str__(self):
-        return f"{self.title} ({self.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
+        return f"({self.id}) {self.title} ({self.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
 
     def get_converted_files(self):
         """

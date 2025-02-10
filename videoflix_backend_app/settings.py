@@ -55,6 +55,7 @@ INSTALLED_APPS = [
 AUTH_USER_MODEL = 'users_app.UserProfile'
 
 MIDDLEWARE = [
+    'middleware.range_requests.RangeMiddleware',
     'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',

@@ -10,7 +10,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = ['id', 'token', 'username', 'email', 'phone',
-                  'address', 'favorite_videos' , 'password', 'confirm_password']
+                  'address', 'favorite_videos', 'password', 'confirm_password']
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': True},
@@ -22,6 +22,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return token.key
 
     def validate(self, data):
+        if UserProfile.objects.filter(email=data['email']).exists():
+            raise serializers.ValidationError(
+                {"email": "User with this email already exists."})
+
         if data['password'] != data['confirm_password']:
             raise serializers.ValidationError(
                 {"password": "Passwords must match."})

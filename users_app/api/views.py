@@ -108,7 +108,11 @@ class UserRegisterView(APIView):
                 subject, "Please confirm your email", from_email, to_email)
             # Attach the HTML content
             email.attach_alternative(html_content, "text/html")
-            email.send()
+
+            try:
+                email.send()
+            except Exception as e:
+                return Response({'error': 'Failed to send confirmation email.', 'details': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
             # Return success response
             return Response({'email': user.email}, status=status.HTTP_201_CREATED)

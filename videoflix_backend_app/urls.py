@@ -6,6 +6,7 @@ from debug_toolbar import urls as debug_toolbar_urls
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('django-rq/', include('django_rq.urls')),
     path('api/users/', include('users_app.api.urls')),
     path('api/content/', include('content_app.api.urls')),
 ]

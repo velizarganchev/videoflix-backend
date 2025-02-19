@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'users_app',
     'content_app',
     "debug_toolbar",
+    "django_rq",
 ]
 
 AUTH_USER_MODEL = 'users_app.UserProfile'
@@ -92,13 +93,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'videoflix_backend_app.wsgi.application'
 
+RQ_QUEUES = {
+    'default': {
+        'HOST': 'localhost',
+        'PORT': 6379,
+        'DB': 0,
+        'USERNAME': 'some-user',
+        'PASSWORD': 'some-password',
+        'DEFAULT_TIMEOUT': 360,
+        'REDIS_CLIENT_KWARGS': {    # Eventual additional Redis connection arguments
+            'ssl_cert_reqs': None,
+        },
+    },
+}
+
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": "redis://django@localhost:6379/0",
         "OPTIONS": {
+            "PASSWORD": "foobared",
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            # "PASSWORD": "mysecret"
         },
         "KEY_PREFIX": "videoflix"
     }
@@ -174,6 +189,8 @@ REST_FRAMEWORK = {
     #     'rest_framework.permissions.IsAuthenticated',
     # ],
 }
+
+CACHE_TTL = int(60 * 15)
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'

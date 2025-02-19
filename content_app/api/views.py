@@ -1,15 +1,23 @@
+from django.conf import settings
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
+from django.core.cache.backends.base import DEFAULT_TIMEOUT
+
 from ..models import Video
 from .serializers import VideoSerializer
+
+CACHETTL = getattr(settings, 'CACHE_TTL', DEFAULT_TIMEOUT)
 
 
 class GetContentItemsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @method_decorator(cache_page(CACHETTL))
     def get(self, request):
         content = Video.objects.all()
         serializer = VideoSerializer(content, many=True)

@@ -62,7 +62,6 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -98,21 +97,17 @@ RQ_QUEUES = {
         'HOST': 'localhost',
         'PORT': 6379,
         'DB': 0,
-        'USERNAME': 'some-user',
-        'PASSWORD': 'some-password',
+        # "PASSWORD": "foobared",
         'DEFAULT_TIMEOUT': 360,
-        'REDIS_CLIENT_KWARGS': {    # Eventual additional Redis connection arguments
-            'ssl_cert_reqs': None,
-        },
     },
 }
 
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://django@localhost:6379/0",
+        "LOCATION": "redis://localhost:6379/0",
         "OPTIONS": {
-            "PASSWORD": "foobared",
+            # "PASSWORD": "foobared",
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
         "KEY_PREFIX": "videoflix"

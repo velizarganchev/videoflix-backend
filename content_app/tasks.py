@@ -1,4 +1,16 @@
 import subprocess
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def remove_file_task(file_path):
+    try:
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        logger.error(f"Error deleting file {file_path}: {e}")
 
 
 def convert_to_120p(video_path):

@@ -2,9 +2,11 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.contrib.auth import authenticate
 from django.utils.http import int_to_base36, base36_to_int
-from django.conf import settings
-from rest_framework.permissions import AllowAny
 from django.http import HttpResponseRedirect
+from django.conf import settings
+from django_rq import get_queue
+
+from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
@@ -12,8 +14,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework import status
 
+
 from ..models import UserProfile
 from .serializers import UserProfileSerializer
+from ..tasks import send_email_task
 
 
 class GetUserProfilesView(APIView):
@@ -93,26 +97,15 @@ class UserRegisterView(APIView):
             confirmation_url = f"{
                 settings.BACKEND_URL}/users/confirm/?uid={hashed_id}&token={token}"
 
-            # Render the email template
-            html_content = render_to_string('../templates/emails/confirmation_email.html', {
-                'user': user.username,
-                'confirmation_url': confirmation_url
-            })
-
-            # Create the email
-            subject = 'Confirm Your Email'
-            from_email = settings.DEFAULT_FROM_EMAIL
-            to_email = [user.email]
-
-            email = EmailMultiAlternatives(
-                subject, "Please confirm your email", from_email, to_email)
-            # Attach the HTML content
-            email.attach_alternative(html_content, "text/html")
-
-            try:
-                email.send()
-            except Exception as e:
-                return Response({'error': 'Failed to send confirmation email.', 'details': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            # Task für das Senden der E-Mail in die Warteschlange stellen
+            queue = get_queue('default')
+            queue.enqueue(
+                send_email_task,
+                'Confirm Your Email',
+                [user.email],
+                '../templates/emails/confirmation_email.html',
+                {'user': user.username, 'confirmation_url': confirmation_url}
+            )
 
             # Return success response
             return Response({'email': user.email}, status=status.HTTP_201_CREATED)
@@ -187,7 +180,7 @@ class UserLoginView(APIView):
         if not email or not password:
             raise ValidationError(
                 {'error': 'Email and password are required.'})
-
+        print(email, password)
         user = authenticate(username=email, password=password)
         if user is None:
             raise ValidationError({'error': 'Invalid credentials.'})
@@ -227,22 +220,15 @@ class UserForgotPasswordView(APIView):
             reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={
                 uid}&token={token}"
 
-            # Render the email template
-            html_content = render_to_string('../templates/emails/reset_password_email.html', {
-                'user': user.username,
-                'reset_url': reset_url,
-            })
-
-            # Send the email
-            subject = 'Reset Your Password'
-            from_email = settings.DEFAULT_FROM_EMAIL
-            recipient_list = [user.email]
-
-            email_message = EmailMultiAlternatives(
-                subject, "Click the link to reset your password.", from_email, recipient_list
+            # Task in die Warteschlange stellen
+            queue = get_queue('default')
+            queue.enqueue(
+                send_email_task,
+                'Reset Your Password',
+                [user.email],
+                '../templates/emails/reset_password_email.html',
+                {'user': user.username, 'reset_url': reset_url}
             )
-            email_message.attach_alternative(html_content, "text/html")
-            email_message.send()
 
         except UserProfile.DoesNotExist:
             pass
@@ -292,9 +278,17 @@ class UserResetPasswordView(APIView):
 
         user_token.delete()
         Token.objects.get_or_create(user=user)
-
         user.set_password(new_password)
         user.save()
+
+        queue = get_queue('default')
+        queue.enqueue(
+            send_email_task,
+            'Your Password Has Been Reset',
+            [user.email],
+            '../templates/emails/password_reset_success.html',
+            {'user': user.username}
+        )
 
         return Response({'message': 'Password has been reset successfully.'}, status=status.HTTP_200_OK)
 

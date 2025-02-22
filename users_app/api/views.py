@@ -314,6 +314,8 @@ class UserLogoutView(APIView):
 
     def post(self, request):
         try:
+            queue = get_queue('default')
+            queue.enqueue(Token.objects.filter(user=request.user).delete)
             token = Token.objects.get(user=request.user)
             token.delete()
             return Response({'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)

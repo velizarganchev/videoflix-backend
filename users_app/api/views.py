@@ -95,7 +95,7 @@ class UserRegisterView(APIView):
             hashed_id = int_to_base36(user.id)
             token = Token.objects.get(user=user).key
             confirmation_url = f"{
-                settings.BACKEND_URL}/users/confirm/?uid={hashed_id}&token={token}"
+                settings.BACKEND_URL}/api/users/confirm/?uid={hashed_id}&token={token}"
 
             # Task für das Senden der E-Mail in die Warteschlange stellen
             queue = get_queue('default')

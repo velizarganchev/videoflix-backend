@@ -29,7 +29,9 @@ SECRET_KEY = 'django-insecure-3eh#&(2p0=#5c!t*!@*&#+3ho*6#9@t&_o^vi0oo5$3lb476h^
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    '127.0.0.1',
+]
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:4200',
@@ -120,13 +122,24 @@ CACHES = {
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql_psycopg2',
+#         'NAME': os.getenv('DB_NAME'),
+#         'USER': os.getenv('DB_USER'),
+#         'PASSWORD': os.getenv('DB_PASSWORD'),
+#         'HOST': '127.0.0.1',
+#         'PORT': '5432',
+#     }
+# }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
         'NAME': os.getenv('DB_NAME'),
         'USER': os.getenv('DB_USER'),
         'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': '127.0.0.1',
+        'HOST': 'video-flix.cfw22q6ss5b6.eu-north-1.rds.amazonaws.com',
         'PORT': '5432',
     }
 }
@@ -201,5 +214,5 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('EMAIL_USER')
 
 FRONTEND_RESET_PASSWORD_URL = os.getenv('RESET_PASSWORD_URL')
-FRONTEND_LOGIN_URL = os.getenv('LOGIN_URL')
+FRONTEND_LOGIN_URL = os.getenv('FRONTEND_URL')
 BACKEND_URL = os.getenv('URL')

@@ -30,6 +30,7 @@ ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:4200',
+    "https://videoflix.velizar-ganchev.com",
 ]
 
 # Application definition

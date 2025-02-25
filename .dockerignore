@@ -1,0 +1,25 @@
+**/.DS_Store
+**/__pycache__
+**/.venv
+**/.git
+**/.vscode
+**/node_modules
+**/npm-debug.log
+**/bin
+**/obj
+/.env              # Nur die Root-.env ignorieren
+
+# Python-spezifisch
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+
+# Docker-Konfigurationen
+docker-compose*
+**/Dockerfile*
+
+# Temporäre/entwicklungsbezogene Dateien
+secrets.dev.yaml
+LICENSE            # Nur wenn nicht benötigt
+README.md          # Nur wenn nicht benötigt

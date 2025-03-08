@@ -16,48 +16,49 @@ logger = logging.getLogger(__name__)
 def video_post_save(sender, instance, created, **kwargs):
     if created:
         try:
-            # Get the video file name and base name
-            video_file_name = os.path.basename(instance.video_file.name)
-            base_name, ext = os.path.splitext(video_file_name)
+            with transaction.atomic():
+                # Get the video file name and base name
+                video_file_name = os.path.basename(instance.video_file.name)
+                base_name, ext = os.path.splitext(video_file_name)
 
-            # Generate relative paths for converted files
-            relative_paths = [
-                os.path.join(settings.MEDIA_URL, 'videos',
-                             f'{base_name}_120p{ext}'),
-                os.path.join(settings.MEDIA_URL, 'videos',
-                             f'{base_name}_360p{ext}'),
-                os.path.join(settings.MEDIA_URL, 'videos',
-                             f'{base_name}_720p{ext}'),
-                os.path.join(settings.MEDIA_URL, 'videos',
-                             f'{base_name}_1080p{ext}'),
-            ]
+                # Generate relative paths for converted files
+                relative_paths = [
+                    os.path.join(settings.MEDIA_URL, 'videos',
+                                 f'{base_name}_120p{ext}'),
+                    os.path.join(settings.MEDIA_URL, 'videos',
+                                 f'{base_name}_360p{ext}'),
+                    os.path.join(settings.MEDIA_URL, 'videos',
+                                 f'{base_name}_720p{ext}'),
+                    os.path.join(settings.MEDIA_URL, 'videos',
+                                 f'{base_name}_1080p{ext}'),
+                ]
 
-            # Conversion map for resolutions
-            resolution_map = {
-                '120p': convert_to_120p,
-                '360p': convert_to_360p,
-                '720p': convert_to_720p,
-                '1080p': convert_to_1080p,
-            }
+                # Conversion map for resolutions
+                resolution_map = {
+                    '120p': convert_to_120p,
+                    '360p': convert_to_360p,
+                    '720p': convert_to_720p,
+                    '1080p': convert_to_1080p,
+                }
 
-            # Normalize paths for the database
-            instance.converted_files = [path.replace(
-                "\\", "/") for path in relative_paths]
+                # Normalize paths for the database
+                instance.converted_files = [path.replace(
+                    "\\", "/") for path in relative_paths]
 
-            # Save the database entry first
-            instance.save()
+                # Save the database entry first
+                instance.save()
 
-            # Add the conversion jobs to the queue
-            queue = django_rq.get_queue('default')
-            for path in relative_paths:
-                resolution = os.path.splitext(path)[0].split('_')[-1]
-                if resolution in resolution_map:
-                    queue.enqueue(
-                        resolution_map[resolution], instance.video_file.path)
+                # Add the conversion jobs to the queue
+                queue = django_rq.get_queue('default')
+                for path in relative_paths:
+                    resolution = os.path.splitext(path)[0].split('_')[-1]
+                    if resolution in resolution_map:
+                        queue.enqueue(
+                            resolution_map[resolution], instance.video_file.path)
 
-            # Remove the original video file after conversion tasks are queued
-            if instance.video_file and os.path.isfile(instance.video_file.path):
-                os.remove(instance.video_file.path)
+                # Remove the original video file after conversion tasks are queued
+                if instance.video_file and os.path.isfile(instance.video_file.path):
+                    os.remove(instance.video_file.path)
 
         except Exception as e:
             logger.error(f"Error during video post-save processing: {e}")

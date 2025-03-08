@@ -62,8 +62,8 @@ class Video(models.Model):
 
             # Generate file paths for different resolutions
             resolutions = ["120p", "360p", "720p", "1080p"]
-            converted_files = [f"{base_path}_{
-                res}{ext}" for res in resolutions]
+            converted_files = [
+                f"{base_path}_{res}{ext}" for res in resolutions]
 
             return converted_files
         except Exception as e:

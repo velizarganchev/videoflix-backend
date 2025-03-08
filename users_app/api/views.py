@@ -63,7 +63,9 @@ class GetSingleUserProfileView(APIView):
             serializer = UserProfileSerializer(user)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except UserProfile.DoesNotExist:
-            return Response({'error': 'User profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "User profile not found."}, status=status.HTTP_404_NOT_FOUND
+            )
 
 
 class UserRegisterView(APIView):
@@ -94,21 +96,20 @@ class UserRegisterView(APIView):
             # Generate token and confirmation URL
             hashed_id = int_to_base36(user.id)
             token = Token.objects.get(user=user).key
-            confirmation_url = f"{
-                settings.BACKEND_URL}/api/users/confirm/?uid={hashed_id}&token={token}"
+            confirmation_url = f"{settings.BACKEND_URL}/api/users/confirm/?uid={hashed_id}&token={token}"
 
             # Task für das Senden der E-Mail in die Warteschlange stellen
-            queue = get_queue('default')
+            queue = get_queue("default")
             queue.enqueue(
                 send_email_task,
-                'Confirm Your Email',
+                "Confirm Your Email",
                 [user.email],
-                '../templates/emails/confirmation_email.html',
-                {'user': user.username, 'confirmation_url': confirmation_url}
+                "../templates/emails/confirmation_email.html",
+                {"user": user.username, "confirmation_url": confirmation_url},
             )
 
             # Return success response
-            return Response({'email': user.email}, status=status.HTTP_201_CREATED)
+            return Response({"email": user.email}, status=status.HTTP_201_CREATED)
 
         # Return validation errors
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -130,25 +131,35 @@ class UserConfirmationView(APIView):
     """
 
     def get(self, request):
-        uid = request.query_params.get('uid')
-        token = request.query_params.get('token')
+        uid = request.query_params.get("uid")
+        token = request.query_params.get("token")
 
         if not uid or not token:
-            return Response({'error': 'Missing uid or token.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Missing uid or token."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             user_token = Token.objects.get(key=token)
             user = user_token.user
         except (Token.DoesNotExist, ValueError, TypeError) as e:
-            return Response({'error': f'Invalid or expired token. {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": f"Invalid or expired token. {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user_id = base36_to_int(uid)
         except ValueError:
-            return Response({'error': 'Invalid user ID.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Invalid user ID."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         if user.id != user_id:
-            return Response({'error': 'User ID does not match the token.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "User ID does not match the token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         user_token.delete()
         Token.objects.get_or_create(user=user)
@@ -174,16 +185,16 @@ class UserLoginView(APIView):
     """
 
     def post(self, request):
-        email = request.data.get('email')
-        password = request.data.get('password')
+        email = request.data.get("email")
+        password = request.data.get("password")
 
         if not email or not password:
             raise ValidationError(
-                {'error': 'Email and password are required.'})
+                {"error": "Email and password are required."})
         print(email, password)
         user = authenticate(username=email, password=password)
         if user is None:
-            raise ValidationError({'error': 'Invalid credentials.'})
+            raise ValidationError({"error": "Invalid credentials."})
 
         return Response(UserProfileSerializer(user).data, status=status.HTTP_200_OK)
 
@@ -207,9 +218,11 @@ class UserForgotPasswordView(APIView):
     """
 
     def post(self, request):
-        email = request.data.get('email')
+        email = request.data.get("email")
         if not email:
-            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             user = UserProfile.objects.get(email=email)
@@ -217,23 +230,25 @@ class UserForgotPasswordView(APIView):
             token = Token.objects.get(user=user).key
             uid = int_to_base36(user.id)
 
-            reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={
-                uid}&token={token}"
+            reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={uid}&token={token}"
 
             # Task in die Warteschlange stellen
-            queue = get_queue('default')
+            queue = get_queue("default")
             queue.enqueue(
                 send_email_task,
-                'Reset Your Password',
+                "Reset Your Password",
                 [user.email],
-                '../templates/emails/reset_password_email.html',
-                {'user': user.username, 'reset_url': reset_url}
+                "../templates/emails/reset_password_email.html",
+                {"user": user.username, "reset_url": reset_url},
             )
 
         except UserProfile.DoesNotExist:
             pass
 
-        return Response({'message': 'If this email exists, a reset link has been sent.'}, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "If this email exists, a reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class UserResetPasswordView(APIView):
@@ -255,42 +270,56 @@ class UserResetPasswordView(APIView):
     """
 
     def post(self, request):
-        uid = request.data.get('uid')
-        token = request.data.get('token')
-        new_password = request.data.get('new_password')
+        uid = request.data.get("uid")
+        token = request.data.get("token")
+        new_password = request.data.get("new_password")
 
         if not uid or not token or not new_password:
-            return Response({'error': 'All fields are required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "All fields are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user_token = Token.objects.get(key=token)
             user = user_token.user
         except (Token.DoesNotExist, ValueError, TypeError):
-            return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Invalid or expired token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user_id = base36_to_int(uid)
         except ValueError:
-            return Response({'error': 'Invalid user ID.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Invalid user ID."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         if user.id != user_id:
-            return Response({'error': 'User ID does not match the token.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "User ID does not match the token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         user_token.delete()
         Token.objects.get_or_create(user=user)
         user.set_password(new_password)
         user.save()
 
-        queue = get_queue('default')
+        queue = get_queue("default")
         queue.enqueue(
             send_email_task,
-            'Your Password Has Been Reset',
+            "Your Password Has Been Reset",
             [user.email],
-            '../templates/emails/password_reset_success.html',
-            {'user': user.username}
+            "../templates/emails/password_reset_success.html",
+            {"user": user.username},
         )
 
-        return Response({'message': 'Password has been reset successfully.'}, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "Password has been reset successfully."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class UserLogoutView(APIView):
@@ -310,14 +339,20 @@ class UserLogoutView(APIView):
         Response: Success message with HTTP 200 if logout is successful.
         Response: Error message with HTTP 400 if the token does not exist.
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         try:
-            queue = get_queue('default')
+            queue = get_queue("default")
             queue.enqueue(Token.objects.filter(user=request.user).delete)
             token = Token.objects.get(user=request.user)
             token.delete()
-            return Response({'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)
+            return Response(
+                {"message": "Successfully logged out."}, status=status.HTTP_200_OK
+            )
         except Token.DoesNotExist:
-            return Response({'error': 'Token not found. User may already be logged out.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Token not found. User may already be logged out."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )

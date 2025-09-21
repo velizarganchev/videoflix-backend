@@ -59,3 +59,11 @@ def convert_to_1080p(video_path):
     except subprocess.CalledProcessError as e:
         print(f"Error converting to 1080p: {e}")
         return None
+
+
+def delete_original_video_task(video_path):
+    try:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+    except Exception as e:
+        logger.error(f"Fehler beim Löschen des Originalvideos: {e}")

@@ -1,8 +1,12 @@
 services:
   web:
-    image: europe-west3-docker.pkg.dev/corded-rope-446313-k5/videoflix-repo/videoflix-backend:latest
-    build: .
-    command: sh -c 'python manage.py collectstatic --noinput && gunicorn videoflix_backend_app.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120'
+    image: velizar86/videoflix-backend:latest
+    pull_policy: always
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             exec gunicorn videoflix_backend_app.wsgi:application
+             --bind :8000 --workers 4 --timeout 120
+             --forwarded-allow-ips='*'"
     env_file:
       - .env
     networks:
@@ -11,10 +15,16 @@ services:
       - static_volume:/app/staticfiles
       - ./uploads:/app/uploads
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000 || exit 1"]
+      # по-надеждна проверка: само TCP към порта на gunicorn
+      test: ["CMD-SHELL", "python - << 'PY'\nimport socket,sys\ns=socket.create_connection(('localhost',8000),5)\ns.close();sys.exit(0)\nPY"]
       interval: 30s
       retries: 3
-      start_period: 10s
+      start_period: 45s
+      timeout: 10s
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
 
   redis:
     image: redis:alpine
@@ -22,10 +32,10 @@ services:
       - app-network
     volumes:
       - redis_data:/data
+    restart: unless-stopped
 
   rq_worker:
-    image: europe-west3-docker.pkg.dev/corded-rope-446313-k5/videoflix-repo/videoflix-backend-rqworker:latest
-    build: .
+    image: velizar86/videoflix-backend-rqworker:latest
     command: python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
     env_file:
       - .env
@@ -37,41 +47,57 @@ services:
     depends_on:
       redis:
         condition: service_started
+    restart: unless-stopped
 
   nginx:
     image: nginx:alpine
     networks:
       - app-network
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./ssl:/etc/letsencrypt  # Korrigierter Pfad
-      - static_volume:/app/staticfiles
-      - ./uploads:/app/uploads
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_volume:/app/staticfiles:ro
+      - ./uploads:/app/uploads:ro
+      - certbot_www:/var/www/certbot
+      - certbot_etc:/etc/letsencrypt
     ports:
       - "80:80"
       - "443:443"
-    restart: always
     depends_on:
       web:
         condition: service_healthy
+    restart: unless-stopped
 
-  certbot:
+  # Пуска се еднократно за първия сертификат:
+  # docker compose run --rm certbot_bootstrap
+  certbot_bootstrap:
     image: certbot/certbot
     volumes:
-      - static_volume:/app/staticfiles
-      - ./ssl:/etc/letsencrypt
-      - ./nginx.conf:/etc/nginx/nginx.conf
+      - certbot_www:/var/www/certbot
+      - certbot_etc:/etc/letsencrypt
     entrypoint: >
-      sh -c "certbot certonly --webroot --webroot-path=/app/staticfiles 
-      --email deine-echte-email@example.com --agree-tos --no-eff-email 
-      -d videoflix.velizar-ganchev-backend.com"
+      sh -c "certbot certonly --webroot -w /var/www/certbot
+      --email ganchev.veli@gmail.com --agree-tos --no-eff-email
+      -d api.videoflix-velizar-ganchev-backend.com"
+
+  # Автоподновяване на всеки ~12 часа
+  certbot_renew:
+    image: certbot/certbot
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_etc:/etc/letsencrypt
+    entrypoint: >
+      sh -c "trap exit TERM; while :; do
+      certbot renew --webroot -w /var/www/certbot --quiet && echo 'renewed';
+      sleep 12h & wait $!; done"
     depends_on:
-      web:
-        condition: service_healthy
+      - nginx
+    restart: unless-stopped
 
 volumes:
   redis_data:
   static_volume:
+  certbot_www:
+  certbot_etc:
 
 networks:
   app-network:

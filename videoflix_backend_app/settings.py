@@ -8,14 +8,13 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env()
-# Чете .env от корена на проекта (където е и manage.py)
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
 # -----------------------------
 # Core / security
 # -----------------------------
 SECRET_KEY = env.str("SECRET_KEY")
-DEBUG = os.getenv("DEBUG", "False") == "True"
+DEBUG = env.bool("DEBUG", default=False)
 
 ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS",
@@ -27,7 +26,7 @@ ALLOWED_HOSTS = env.list(
     ],
 )
 
-# Зад reverse proxy (nginx) да знае, че трафикът е HTTPS
+# зад reverse proxy
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # -----------------------------
@@ -44,13 +43,16 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
-    "debug_toolbar",
     "django_rq",
     "import_export",
 
     "users_app",
     "content_app",
 ]
+
+# debug toolbar само в DEBUG
+if DEBUG:
+    INSTALLED_APPS.append("debug_toolbar")
 
 AUTH_USER_MODEL = "users_app.UserProfile"
 
@@ -59,7 +61,6 @@ AUTH_USER_MODEL = "users_app.UserProfile"
 # -----------------------------
 MIDDLEWARE = [
     "middleware.range_requests.RangeMiddleware",
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -70,10 +71,13 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+if DEBUG:
+    MIDDLEWARE.insert(1, "debug_toolbar.middleware.DebugToolbarMiddleware")
+
 INTERNAL_IPS = ["127.0.0.1"]
 
 # -----------------------------
-# Templates / WSGI
+# URLconf / Templates / WSGI
 # -----------------------------
 ROOT_URLCONF = "videoflix_backend_app.urls"
 
@@ -100,11 +104,9 @@ WSGI_APPLICATION = "videoflix_backend_app.wsgi.application"
 # -----------------------------
 RQ_QUEUES = {
     "default": {
-        # В контейнерите redis е по име на услугата, не localhost
         "HOST": env("REDIS_HOST", default="redis"),
         "PORT": 6379,
         "DB": 0,
-        # "PASSWORD": "foobared",
         "DEFAULT_TIMEOUT": 360,
     },
 }
@@ -115,10 +117,8 @@ RQ_QUEUES = {
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        # Чете REDIS_URL от .env; по подразбиране е вътрешния контейнер
         "LOCATION": env("REDIS_URL", default="redis://redis:6379/0"),
         "OPTIONS": {
-            # "PASSWORD": "foobared",
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
         "KEY_PREFIX": "videoflix",
@@ -126,8 +126,17 @@ CACHES = {
 }
 
 # -----------------------------
-# Database (PostgreSQL)
+# Database (PostgreSQL) с опционален SSL
 # -----------------------------
+DB_SSL_REQUIRE = env.bool("DB_SSL_REQUIRE", default=False)
+DB_SSL_ROOTCERT = env.str("DB_SSL_ROOTCERT", default="")
+
+_db_options = {}
+if DB_SSL_REQUIRE:
+    _db_options["sslmode"] = "require"
+    if DB_SSL_ROOTCERT:
+        _db_options["sslrootcert"] = DB_SSL_ROOTCERT
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql_psycopg2",
@@ -136,10 +145,18 @@ DATABASES = {
         "PASSWORD": env("DB_PASSWORD"),
         "HOST": env("DB_HOST"),
         "PORT": env("DB_PORT"),
-        # Ако RDS изисква SSL, раскоментирай:
-        "OPTIONS": {"sslmode": "require"},
+        "OPTIONS": _db_options,
     }
 }
+
+# --- Local dev override: SQLite вместо Postgres ---
+if DEBUG and env.bool("USE_SQLITE_LOCAL", default=False):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 # -----------------------------
 # Password validation
@@ -166,9 +183,8 @@ STATIC_URL = "/static/"
 STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
-# В nginx конфигурацията ти сервира /media/ от /app/uploads → съвпада:
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")
+MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")  # локално; на PROD ползваме S3
 
 # -----------------------------
 # DRF
@@ -216,14 +232,41 @@ EMAIL_HOST_PASSWORD = env.str("EMAIL_PASSWORD")
 DEFAULT_FROM_EMAIL = env.str("EMAIL_USER")
 
 # -----------------------------
-# App URLs exposed to emails/frontends
+# App URLs (за имейли/фронтенд)
 # -----------------------------
 FRONTEND_RESET_PASSWORD_URL = env.str("RESET_PASSWORD_URL")
 FRONTEND_LOGIN_URL = env.str("FRONTEND_URL")
 BACKEND_URL = env.str("URL")
 
 # -----------------------------
-# Production hardening (auto)
+# S3 media (опционално)
+# -----------------------------
+USE_S3_MEDIA = env.bool("USE_S3_MEDIA", default=False)
+
+if USE_S3_MEDIA:
+    INSTALLED_APPS.append("storages")
+    AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = env.str("AWS_SECRET_ACCESS_KEY")
+    AWS_STORAGE_BUCKET_NAME = env.str("AWS_STORAGE_BUCKET_NAME")
+    AWS_S3_REGION_NAME = env.str("AWS_S3_REGION_NAME", default="eu-central-1")
+    AWS_S3_QUERYSTRING_AUTH = env.bool(
+        "AWS_S3_QUERYSTRING_AUTH", default=False)
+
+    # Media през S3
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+
+    # По-сигурни и кеширани обекти
+    AWS_DEFAULT_ACL = None                 # не слагаме object ACL по подразбиране
+    AWS_S3_FILE_OVERWRITE = False          # не презаписвай при едно и също име
+    AWS_S3_SIGNATURE_VERSION = "s3v4"
+    AWS_S3_OBJECT_PARAMETERS = {
+        "CacheControl": "public, max-age=31536000, immutable"
+    }
+
+    MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
+
+# -----------------------------
+# Production hardening
 # -----------------------------
 if not DEBUG:
     SESSION_COOKIE_SECURE = True

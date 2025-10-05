@@ -28,3 +28,7 @@ tablib==3.8.0
 tqdm==4.67.1
 tzdata==2024.2
 whitenoise==6.9.0
+
+# --- добавени за S3 ---
+django-storages[boto3]==1.14.4
+boto3==1.35.36

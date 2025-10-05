@@ -6,16 +6,18 @@ from django.conf.urls.static import static
 from django.http import HttpResponse
 from . import views
 
+
 def home(request):
     return HttpResponse("Welcome to VideoFlix API!")
+
 
 urlpatterns = [
     path('', home, name='home'),
     path('health/', views.health_check, name='health-check'),
     path('admin/', admin.site.urls),
     path('django-rq/', include('django_rq.urls')),
-    path('api/users/', include('users_app.api.urls')),
-    path('api/content/', include('content_app.api.urls')),
+    path('users/', include('users_app.api.urls')),
+    path('content/', include('content_app.api.urls')),
 ]
 
 # Serve media and static files in development

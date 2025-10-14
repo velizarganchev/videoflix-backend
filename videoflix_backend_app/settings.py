@@ -26,7 +26,6 @@ ALLOWED_HOSTS = env.list(
     ],
 )
 
-# зад reverse proxy
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # -----------------------------
@@ -50,7 +49,7 @@ INSTALLED_APPS = [
     "content_app",
 ]
 
-# debug toolbar само в DEBUG
+# debug toolbar
 if DEBUG:
     INSTALLED_APPS.append("debug_toolbar")
 
@@ -117,7 +116,7 @@ RQ_QUEUES = {
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": env("REDIS_URL", default="redis://redis:6379/0"),
+        "LOCATION": env("REDIS_LOCATION", default="redis://redis:6379/0"),
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
@@ -126,7 +125,7 @@ CACHES = {
 }
 
 # -----------------------------
-# Database (PostgreSQL) с опционален SSL
+# Database (PostgreSQL)
 # -----------------------------
 DB_SSL_REQUIRE = env.bool("DB_SSL_REQUIRE", default=False)
 DB_SSL_ROOTCERT = env.str("DB_SSL_ROOTCERT", default="")
@@ -149,7 +148,6 @@ DATABASES = {
     }
 }
 
-# --- Local dev override: SQLite вместо Postgres ---
 if DEBUG and env.bool("USE_SQLITE_LOCAL", default=False):
     DATABASES = {
         "default": {
@@ -207,17 +205,18 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=[
         "http://localhost:4200",
-        "https://videoflix-velizar-ganchev.com",
         "https://videoflix.velizar-ganchev.com",
         "https://api.videoflix-velizar-ganchev-backend.com",
     ],
 )
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://videoflix-velizar-ganchev.com",
-    "https://videoflix.velizar-ganchev.com",
-    "https://api.videoflix-velizar-ganchev-backend.com",
-]
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[
+        "https://videoflix.velizar-ganchev.com",
+        "https://api.videoflix-velizar-ganchev-backend.com",
+    ]
+)
 
 # -----------------------------
 # Email
@@ -227,19 +226,19 @@ EMAIL_BACKEND = env(
 EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
 EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
-EMAIL_HOST_USER = env.str("EMAIL_USER")
-EMAIL_HOST_PASSWORD = env.str("EMAIL_PASSWORD")
-DEFAULT_FROM_EMAIL = env.str("EMAIL_USER")
+EMAIL_HOST_USER = env.str("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = env.str("EMAIL_HOST_PASSWORD")
+DEFAULT_FROM_EMAIL = env.str("EMAIL_HOST_USER")
 
 # -----------------------------
-# App URLs (за имейли/фронтенд)
+# App URLs for emails
 # -----------------------------
 FRONTEND_RESET_PASSWORD_URL = env.str("RESET_PASSWORD_URL")
 FRONTEND_LOGIN_URL = env.str("FRONTEND_URL")
 BACKEND_URL = env.str("URL")
 
 # -----------------------------
-# S3 media (опционално)
+# S3 media storage
 # -----------------------------
 USE_S3_MEDIA = env.bool("USE_S3_MEDIA", default=False)
 
@@ -252,12 +251,10 @@ if USE_S3_MEDIA:
     AWS_S3_QUERYSTRING_AUTH = env.bool(
         "AWS_S3_QUERYSTRING_AUTH", default=False)
 
-    # Media през S3
     DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 
-    # По-сигурни и кеширани обекти
-    AWS_DEFAULT_ACL = None                 # не слагаме object ACL по подразбиране
-    AWS_S3_FILE_OVERWRITE = False          # не презаписвай при едно и също име
+    AWS_DEFAULT_ACL = None
+    AWS_S3_FILE_OVERWRITE = False
     AWS_S3_SIGNATURE_VERSION = "s3v4"
     AWS_S3_OBJECT_PARAMETERS = {
         "CacheControl": "public, max-age=31536000, immutable"

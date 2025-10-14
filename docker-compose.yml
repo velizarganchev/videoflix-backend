@@ -2,11 +2,7 @@ services:
   web:
     image: velizar86/videoflix-backend:latest
     pull_policy: always
-    command: >
-      sh -c "python manage.py collectstatic --noinput &&
-             exec gunicorn videoflix_backend_app.wsgi:application
-             --bind 0.0.0.0:8000 --workers 4 --timeout 120
-             --forwarded-allow-ips='*'"
+    command: ["/app/backend.entrypoint.sh", "web"]
     env_file:
       - .env
     environment:
@@ -17,6 +13,9 @@ services:
       - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME}
       - AWS_S3_QUERYSTRING_AUTH=${AWS_S3_QUERYSTRING_AUTH}
       - AWS_DEFAULT_REGION=${AWS_S3_REGION_NAME}
+      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
     networks:
       - app-network
     volumes:
@@ -41,9 +40,9 @@ services:
     restart: unless-stopped
 
   rq_worker:
-    image: velizar86/videoflix-backend:latest   # <-- същият образ като web
+    image: velizar86/videoflix-backend:latest
     pull_policy: always
-    command: python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
+    command: ["/app/backend.entrypoint.sh", "worker"]
     env_file:
       - .env
     environment:
@@ -54,7 +53,6 @@ services:
       - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME}
       - AWS_S3_QUERYSTRING_AUTH=${AWS_S3_QUERYSTRING_AUTH}
       - AWS_DEFAULT_REGION=${AWS_S3_REGION_NAME}
-      # --- кротки лимити за CPU/RAM вътре в процеса ---
       - OMP_NUM_THREADS=1
       - OPENBLAS_NUM_THREADS=1
       - NUMEXPR_MAX_THREADS=1

@@ -1,25 +1,25 @@
-**/.DS_Store
-**/__pycache__
-**/.venv
-**/.git
-**/.vscode
-**/node_modules
-**/npm-debug.log
-**/bin
-**/obj
-/.env              # Nur die Root-.env ignorieren
+# .env files
+.env
+.env.*
 
-# Python-spezifisch
+# Python artifacts  
+__pycache__/
 *.pyc
 *.pyo
-.pytest_cache
-.mypy_cache
+*.pyd
 
-# Docker-Konfigurationen
-docker-compose*
-**/Dockerfile*
+# Git и IDE
+.git
+.gitignore
+.vscode
+.idea
 
-# Temporäre/entwicklungsbezogene Dateien
-secrets.dev.yaml
-LICENSE            # Nur wenn nicht benötigt
-README.md          # Nur wenn nicht benötigt
+# Node / frontend
+node_modules
+npm-debug.log
+dist
+build
+
+# Docker
+docker-compose*.yml
+.DS_Store

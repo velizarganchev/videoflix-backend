@@ -96,7 +96,7 @@ class UserRegisterView(APIView):
             # Generate token and confirmation URL
             hashed_id = int_to_base36(user.id)
             token = Token.objects.get(user=user).key
-            confirmation_url = f"{settings.BACKEND_URL}/api/users/confirm/?uid={hashed_id}&token={token}"
+            confirmation_url = f"{settings.BACKEND_URL}/users/confirm/?uid={hashed_id}&token={token}"
 
             # Task für das Senden der E-Mail in die Warteschlange stellen
             queue = get_queue("default")
@@ -193,7 +193,7 @@ class UserLoginView(APIView):
                 {"error": "Email and password are required."})
         print(email, password)
         user = authenticate(username=email, password=password)
-        if user is None:
+        if user is None or not user.is_active:
             raise ValidationError({"error": "Invalid credentials."})
 
         return Response(UserProfileSerializer(user).data, status=status.HTTP_200_OK)

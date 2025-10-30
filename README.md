@@ -190,6 +190,35 @@ docker compose up -d --build
 Nginx serves static at `/static/` and proxies app to the `web` service on port 8000. Media in production is expected to be on S3 when `USE_S3_MEDIA=true`. If you prefer local media behind Nginx, add the `/media/` alias to `nginx.conf` (already present in sample configs).
 
 
+## Tests
+
+The test suite runs locally without external services — Redis/RQ/cache/S3 are mocked in `conftest.py`.  
+Use SQLite by setting `USE_SQLITE_LOCAL=1`.
+
+### Run all tests
+
+**Windows (CMD):**  
+    set DEBUG=1 && set USE_SQLITE_LOCAL=1 && pytest -v
+
+**Windows (PowerShell):**  
+    $env:DEBUG=1; $env:USE_SQLITE_LOCAL=1; pytest -v
+
+**macOS / Linux:**  
+    DEBUG=1 USE_SQLITE_LOCAL=1 pytest -v
+
+### Run a subset
+
+**Users app only:**  
+    DEBUG=1 USE_SQLITE_LOCAL=1 pytest users_app/tests -v
+
+**Content app only:**  
+    DEBUG=1 USE_SQLITE_LOCAL=1 pytest content_app/tests -v
+
+> Notes:  
+> - `pytest.ini` is configured to suppress noisy warnings and use the Django settings for tests.  
+> - No Redis server or RQ worker is required for tests; queues and cache are mocked.
+
+
 ## Contributing
 
 - Fork the repo and create a feature branch

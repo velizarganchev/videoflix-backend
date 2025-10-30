@@ -1,57 +1,90 @@
+"""
+content_app.models — Video model for Videoflix backend
+
+Purpose:
+--------
+Defines the Video model representing uploaded video content,
+including metadata, storage references (S3 or local), and helper
+methods for generating thumbnails and quality-specific keys.
+
+Features:
+- Supports S3 and local file storage backends
+- Automatically generates thumbnail on creation (if MoviePy is available)
+- Provides helper methods for handling video quality mapping
+"""
+
 from django.db import models
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from PIL import Image
 import os
 import io
-import tempfile  # NEW
+import tempfile
 
-# Ако ще генерираш thumbnail локално, MoviePy е тежък; по-добре в worker
+# Attempt to import lightweight video processing library (optional)
 try:
     from moviepy import VideoFileClip
 except Exception:
-    VideoFileClip = None  # за да не гърми при липса
+    VideoFileClip = None  # Safe fallback if MoviePy is not installed
 
-# --- ЯВНО ФОРСИРАМЕ S3 STORAGE ЗА ТЕЗИ ПОЛЕТА ---
+# --- Force S3 storage for video/image fields if available ---
 try:
     from storages.backends.s3boto3 import S3Boto3Storage
     s3_storage = S3Boto3Storage()
 except Exception:
-    # fallback – ако по някаква причина липсва django-storages (не би трябвало)
+    # Fallback to local storage if django-storages is missing
     from django.core.files.storage import FileSystemStorage
     s3_storage = FileSystemStorage()
 
+# --- Genre choices ---
 LIST_OF_GENRES = [
-    ('Action', 'Action'),
-    ('Adventure', 'Adventure'),
-    ('Comedy', 'Comedy'),
-    ('Crime', 'Crime'),
-    ('Drama', 'Drama'),
-    ('Fantasy', 'Fantasy'),
-    ('Historical', 'Historical'),
-    ('Horror', 'Horror'),
-    ('Mystery', 'Mystery'),
-    ('Philosophical', 'Philosophical'),
-    ('Political', 'Political'),
-    ('Romance', 'Romance'),
-    ('Science fiction', 'Science fiction'),
-    ('Thriller', 'Thriller'),
-    ('Western', 'Western'),
-    ('Animation', 'Animation'),
-    ('Documentary', 'Documentary'),
-    ('Biographical', 'Biographical'),
-    ('Educational', 'Educational'),
-    ('Erotic', 'Erotic'),
-    ('Musical', 'Musical'),
-    ('Reality', 'Reality'),
-    ('Sports', 'Sports'),
-    ('Superhero', 'Superhero'),
-    ('Surreal', 'Surreal'),
-    ('Other', 'Other'),
+    ("Action", "Action"),
+    ("Adventure", "Adventure"),
+    ("Comedy", "Comedy"),
+    ("Crime", "Crime"),
+    ("Drama", "Drama"),
+    ("Fantasy", "Fantasy"),
+    ("Historical", "Historical"),
+    ("Horror", "Horror"),
+    ("Mystery", "Mystery"),
+    ("Philosophical", "Philosophical"),
+    ("Political", "Political"),
+    ("Romance", "Romance"),
+    ("Science fiction", "Science fiction"),
+    ("Thriller", "Thriller"),
+    ("Western", "Western"),
+    ("Animation", "Animation"),
+    ("Documentary", "Documentary"),
+    ("Biographical", "Biographical"),
+    ("Educational", "Educational"),
+    ("Erotic", "Erotic"),
+    ("Musical", "Musical"),
+    ("Reality", "Reality"),
+    ("Sports", "Sports"),
+    ("Superhero", "Superhero"),
+    ("Surreal", "Surreal"),
+    ("Other", "Other"),
 ]
 
 
 class Video(models.Model):
+    """
+    Represents a video object in the Videoflix platform.
+
+    Fields:
+        created_at (DateTime): Auto-set creation timestamp.
+        title (CharField): Unique video title.
+        description (TextField): Description of the video.
+        category (CharField): Optional genre/category.
+        image_file (ImageField): Thumbnail or preview image.
+        video_file (FileField): Original uploaded video file.
+        converted_files (JSONField): Map of quality resolutions to file keys.
+
+    Behavior:
+        - On save, automatically builds converted_files mapping.
+        - On creation, auto-generates thumbnail if MoviePy is available.
+    """
+
     created_at = models.DateTimeField(auto_now_add=True)
     title = models.CharField(max_length=100, unique=True)
     description = models.TextField()
@@ -59,30 +92,32 @@ class Video(models.Model):
         max_length=50, choices=LIST_OF_GENRES, blank=True, null=True
     )
 
-    # >>> ТУК форсираме S3 storage <<<
+    # Force S3 (or fallback storage)
     image_file = models.ImageField(
-        storage=s3_storage, upload_to='images', blank=True, null=True
+        storage=s3_storage, upload_to="images", blank=True, null=True
     )
     video_file = models.FileField(
-        storage=s3_storage, upload_to='videos', blank=True, null=True
+        storage=s3_storage, upload_to="videos", blank=True, null=True
     )
 
-    # ВАЖНО: вместо list -> dict { "360p": "videos/..._360p.mp4", ... }
+    # Stores resolution map, e.g. { "360p": "videos/..._360p.mp4", ... }
     converted_files = models.JSONField(blank=True, null=True, default=dict)
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ["-created_at"]
 
     def __str__(self):
+        """Readable string representation for admin and debugging."""
         return f"({self.id}) {self.title} ({self.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
 
-    # ---- helpers for S3 keys ----
+    # ---- S3 key helpers ----
     QUALITIES = ("120p", "360p", "720p", "1080p")
 
     def base_path_and_ext(self):
         """
-        Връща (base_path, ext) от self.video_file.name
-        example: 'videos/123/video.mp4' -> ('videos/123/video', '.mp4')
+        Return (base_path, ext) from the original video file name.
+        Example:
+            'videos/123/video.mp4' -> ('videos/123/video', '.mp4')
         """
         if not self.video_file:
             return None, None
@@ -91,8 +126,9 @@ class Video(models.Model):
 
     def build_converted_map(self):
         """
-        Генерира dict с ключове за всички качества ОТ оригиналния ключ.
-        Не качва/създава файлове, просто генерира имена.
+        Build a dictionary mapping available quality keys to file paths.
+
+        Does not upload or create files; only generates predictable filenames.
         """
         base, ext = self.base_path_and_ext()
         if not base:
@@ -101,9 +137,14 @@ class Video(models.Model):
 
     def get_key_for_quality(self, quality: str | None = None):
         """
-        Връща S3 key (или storage key) за подаденото качество.
-        Ако няма converted_files — генерира от името на оригинала.
-        Ако quality е None -> връща оригиналния ключ (self.video_file.name).
+        Return the storage key for a given video quality.
+
+        If quality is None:
+            Returns the original file key (self.video_file.name)
+        If converted_files dict exists in DB:
+            Uses stored mapping.
+        Otherwise:
+            Dynamically builds the key from the base path.
         """
         if not self.video_file:
             return None
@@ -111,27 +152,26 @@ class Video(models.Model):
         if not quality:
             return self.video_file.name
 
-        # ако вече имаме dict в БД, ползвай него
         if isinstance(self.converted_files, dict) and quality in self.converted_files:
             return self.converted_files[quality]
 
-        # иначе построи on-the-fly от оригинала
         base, ext = self.base_path_and_ext()
         if not base:
             return None
         return f"{base}_{quality}{ext}"
 
-    # ---- thumbnail generation ----
+    # ---- Thumbnail generation ----
     def save(self, *args, **kwargs):
         """
-        1) Нормализира converted_files към dict.
-        2) При СЪЗДАВАНЕ (няма pk), ако има video_file и няма image_file:
-           - копира upload потока във временен файл;
-           - вади кадър (1.0s) чрез MoviePy и го записва като JPEG в image_file (S3);
-           - връща указателя на video_file в начало, за да се качи коректно.
-        3) Записва модела нормално.
+        Override save() to:
+        1) Normalize converted_files to a dict.
+        2) On CREATE (no pk yet), if video_file exists but no image_file:
+            - Write upload stream to a temporary local file.
+            - Generate a thumbnail at 1.0s using MoviePy.
+            - Upload it to image_file (S3 or default storage).
+        3) Always reset file pointer to ensure proper upload.
         """
-        # 1) нормализирай converted_files към dict
+        # Normalize converted_files to dict if needed
         if not self.converted_files or isinstance(self.converted_files, list):
             self.converted_files = self.build_converted_map()
 
@@ -141,10 +181,10 @@ class Video(models.Model):
         tmp_path = None
         if need_thumb:
             try:
-                # вземи file-like обекта от полето
+                # Get file-like object from upload
                 fileobj = self.video_file
 
-                # направи временен локален файл от upload stream-а
+                # Create a temporary local copy of the uploaded file
                 suffix = os.path.splitext(getattr(fileobj, "name", "video.mp4"))[
                     1] or ".mp4"
                 fd, tmp_path = tempfile.mkstemp(suffix=suffix)
@@ -155,38 +195,38 @@ class Video(models.Model):
                     else:
                         tmpf.write(fileobj.read())
 
-                # генерирай thumbnail само ако има MoviePy
+                # Generate thumbnail if MoviePy is available
                 if VideoFileClip:
                     self._generate_thumbnail_local(tmp_path, time_sec=1.0)
 
-                # върни указателя на upload файла в началото –
-                # важно, иначе storage може да качи полу-празен файл
+                # Reset file pointer after reading stream (important for storage upload)
                 try:
                     fileobj.seek(0)
                 except Exception:
                     pass
 
             except Exception as e:
-                # не прекъсвай save при проблем с тъмбнейла
+                # Do not interrupt save process if thumbnail generation fails
                 print(f"Thumbnail generation skipped: {e}")
             finally:
+                # Clean up temporary file
                 if tmp_path:
                     try:
                         os.remove(tmp_path)
                     except Exception:
                         pass
 
-        # 3) стандартният save
+        # Perform standard save
         super().save(*args, **kwargs)
 
     def _generate_thumbnail_local(self, video_path: str, time_sec: float = 1.0):
         """
-        Генерира thumbnail от ЛОКАЛЕН video_path и качва в self.image_file.
-        Работи независимо от това, че финалният storage е S3,
-        защото image_file.save() използва свързания бекенд.
+        Generate a thumbnail from a local video file and upload it to image_file.
+
+        Works seamlessly with S3 or local storage, since image_file.save()
+        automatically uses its configured backend.
         """
         try:
-            # Име на JPEG-а близо до видеото, но в нашата upload_to('images')
             base_name = os.path.splitext(
                 os.path.basename(self.video_file.name))[0]
             thumb_name = f"{base_name}.jpg"
@@ -199,12 +239,11 @@ class Video(models.Model):
             image.save(buf, format="JPEG")
             buf.seek(0)
 
-            # запиши в ImageField (ще отиде в S3, защото полето е с s3_storage)
+            # Save thumbnail to the configured storage (S3 or local)
             self.image_file.save(
                 thumb_name,
                 ContentFile(buf.read()),
-                save=False  # важно: да не влизаме в рекурсивни save()
+                save=False,  # Prevent recursive save()
             )
         except Exception as e:
-            # лог по желание
             print(f"Thumbnail generation failed: {e}")

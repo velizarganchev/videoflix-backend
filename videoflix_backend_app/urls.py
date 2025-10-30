@@ -1,14 +1,14 @@
 import debug_toolbar
+from django.shortcuts import render
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from django.http import HttpResponse
 from . import views
 
 
 def home(request):
-    return HttpResponse("Welcome to VideoFlix API!")
+    return render(request, "home.html")
 
 
 urlpatterns = [

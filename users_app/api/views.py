@@ -1,34 +1,47 @@
+"""
+users_app.api.views — User-facing API endpoints for Videoflix
+
+Includes:
+- Profiles: list all users, get single user
+- Auth: register, confirm, login, logout
+- Passwords: forgot/reset flows
+
+Notes:
+- Email sending is delegated to an RQ task (send_email_task) via django-rq.
+- Tokens use DRF's Token model (one token per user).
+- Confirmation / reset flows use base36 user id + token key.
+"""
+
+# used by send_email_task templates
 from django.core.mail import EmailMultiAlternatives
-from django.template.loader import render_to_string
+from django.template.loader import render_to_string   # used by email templates
 from django.contrib.auth import authenticate
 from django.utils.http import int_to_base36, base36_to_int
 from django.http import HttpResponseRedirect
 from django.conf import settings
 from django_rq import get_queue
 
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework import status
-
 
 from ..models import UserProfile
 from .serializers import UserProfileSerializer
 from ..tasks import send_email_task
 
 
+# ----------------------------------------------------------------------
+# Profiles
+# ----------------------------------------------------------------------
 class GetUserProfilesView(APIView):
     """
-    Handles the retrieval of all user profiles.
+    Retrieve all user profiles.
 
     Methods:
-        get(request): Retrieves all user profiles and returns a list of their emails.
-
-    Returns:
-        Response: A JSON response containing a list of email addresses and HTTP 200 status.
+        get(request): returns serialized list of users (all fields allowed by serializer).
     """
 
     def get(self, request):
@@ -38,67 +51,61 @@ class GetUserProfilesView(APIView):
 
 
 class GetSingleUserProfileView(APIView):
-    permission_classes = [IsAuthenticated]
     """
-    Retrieves a single user profile by its ID.
+    Retrieve a single user profile by id.
 
     Permissions:
-        IsAuthenticated: Only authenticated users can access this view.
-
-    Methods:
-        get(request, pk): Retrieves a user profile for the provided ID.
-
-    Args:
-        request (Request): The HTTP request object.
-        pk (int): The primary key (ID) of the user profile.
-
-    Returns:
-        Response: Serialized user profile data with HTTP 200 if found.
-        Response: Error message with HTTP 404 if the profile does not exist.
+        IsAuthenticated — only logged-in users can access.
     """
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        """
+        Args:
+            pk (int): primary key for the target user profile.
+
+        Returns:
+            200 + serialized user data if found, else 404.
+        """
         try:
             user = UserProfile.objects.get(id=pk)
             serializer = UserProfileSerializer(user)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except UserProfile.DoesNotExist:
             return Response(
-                {"error": "User profile not found."}, status=status.HTTP_404_NOT_FOUND
+                {"error": "User profile not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
 
+# ----------------------------------------------------------------------
+# Registration & Confirmation
+# ----------------------------------------------------------------------
 class UserRegisterView(APIView):
-    permission_classes = [AllowAny]
     """
-    Handles user registration and sends a confirmation email.
+    Handle user registration and queue confirmation email.
 
     Permissions:
-        AllowAny: Open to all users, regardless of authentication.
-
-    Methods:
-        post(request): Validates registration data, creates an inactive user, and sends a confirmation email.
-
-    Args:
-        request (Request): HTTP request with user registration data.
-
-    Returns:
-        Response: User email and HTTP 201 if registration is successful.
-        Response: Validation errors with HTTP 400 if data is invalid.
+        AllowAny — open endpoint for sign-up.
     """
+    permission_classes = [AllowAny]
 
     def post(self, request):
+        """
+        Expects serializer-compatible payload (email, password, confirm_password, etc.)
+        Creates an inactive user and sends confirmation via RQ.
+        """
         serializer = UserProfileSerializer(data=request.data)
         if serializer.is_valid():
-            # Save user with inactive status
+            # Create inactive user; token is created by serializer get_token()
             user = serializer.save(is_active=False)
 
-            # Generate token and confirmation URL
+            # Compose confirmation URL using base36 uid + token
             hashed_id = int_to_base36(user.id)
             token = Token.objects.get(user=user).key
             confirmation_url = f"{settings.BACKEND_URL}/users/confirm/?uid={hashed_id}&token={token}"
 
-            # Task für das Senden der E-Mail in die Warteschlange stellen
+            # Queue email sending task (subject, recipients, template, context)
             queue = get_queue("default")
             queue.enqueue(
                 send_email_task,
@@ -108,37 +115,37 @@ class UserRegisterView(APIView):
                 {"user": user.username, "confirmation_url": confirmation_url},
             )
 
-            # Return success response
             return Response({"email": user.email}, status=status.HTTP_201_CREATED)
 
-        # Return validation errors
+        # Validation errors (unique email, password mismatch, etc.)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UserConfirmationView(APIView):
     """
-    Confirms user registration by validating a token and activating the user account.
+    Confirm registration by validating token + base36 uid and activating the account.
 
-    Methods:
-        get(request): Validates the UID and token from query parameters and activates the user.
-
-    Args:
-        request (Request): HTTP request containing 'uid' and 'token' as query parameters.
-
-    Returns:
-        HttpResponseRedirect: Redirects to the frontend login URL on successful confirmation.
-        Response: Error message with HTTP 400 if validation fails.
+    On success: redirects to frontend login page.
     """
 
     def get(self, request):
+        """
+        Query params:
+            uid (str, base36), token (str)
+
+        Returns:
+            302 redirect to FRONTEND_LOGIN_URL on success, else 400 with details.
+        """
         uid = request.query_params.get("uid")
         token = request.query_params.get("token")
 
         if not uid or not token:
             return Response(
-                {"error": "Missing uid or token."}, status=status.HTTP_400_BAD_REQUEST
+                {"error": "Missing uid or token."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate token → get user
         try:
             user_token = Token.objects.get(key=token)
             user = user_token.user
@@ -148,11 +155,13 @@ class UserConfirmationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate base36 uid and match to token user
         try:
             user_id = base36_to_int(uid)
         except ValueError:
             return Response(
-                {"error": "Invalid user ID."}, status=status.HTTP_400_BAD_REQUEST
+                {"error": "Invalid user ID."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if user.id != user_id:
@@ -161,6 +170,7 @@ class UserConfirmationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Rotate token (delete old, ensure new exists) and activate
         user_token.delete()
         Token.objects.get_or_create(user=user)
         user.is_active = True
@@ -169,28 +179,31 @@ class UserConfirmationView(APIView):
         return HttpResponseRedirect(settings.FRONTEND_LOGIN_URL)
 
 
+# ----------------------------------------------------------------------
+# Login / Logout
+# ----------------------------------------------------------------------
 class UserLoginView(APIView):
     """
-    Authenticates a user and returns their profile data if successful.
-
-    Methods:
-        post(request): Authenticates using the provided email and password.
-
-    Args:
-        request (Request): HTTP request containing 'email' and 'password'.
-
-    Returns:
-        Response: Serialized user profile and HTTP 200 if authentication is successful.
-        ValidationError: HTTP 400 if credentials are invalid or missing.
+    Authenticate user by email + password and return serialized profile (with token).
     """
 
     def post(self, request):
+        """
+        Expects:
+            email, password
+
+        Returns:
+            200 + user data on success; 400 + error on missing/invalid credentials.
+        """
         email = request.data.get("email")
         password = request.data.get("password")
 
         if not email or not password:
             raise ValidationError(
                 {"error": "Email and password are required."})
+
+        # NB: username is email in this project setup
+        # Debug print (kept intentionally; remove in production)
         print(email, password)
         user = authenticate(username=email, password=password)
         if user is None or not user.is_active:
@@ -199,29 +212,61 @@ class UserLoginView(APIView):
         return Response(UserProfileSerializer(user).data, status=status.HTTP_200_OK)
 
 
+class UserLogoutView(APIView):
+    """
+    Logout by deleting the user's auth token.
+
+    Permissions:
+        IsAuthenticated — token must exist.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """
+        Deletes token and returns a generic success/error response.
+        Token deletion is also enqueued once (as in current logic).
+        """
+        try:
+            queue = get_queue("default")
+            # Enqueue token deletion (kept as-is), then delete explicitly below:
+            queue.enqueue(Token.objects.filter(user=request.user).delete)
+            token = Token.objects.get(user=request.user)
+            token.delete()
+            return Response(
+                {"message": "Successfully logged out."},
+                status=status.HTTP_200_OK,
+            )
+        except Token.DoesNotExist:
+            return Response(
+                {"error": "Token not found. User may already be logged out."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+# ----------------------------------------------------------------------
+# Password reset flow
+# ----------------------------------------------------------------------
 class UserForgotPasswordView(APIView):
     """
-    Handles password reset requests by sending a reset link to the user's email.
-
-    Methods:
-        post(request): Processes a password reset request by generating a token and sending an email.
-
-    Args:
-        request (Request): HTTP request containing the user's email.
-
-    Returns:
-        Response: A generic success message with HTTP 200, regardless of email existence.
-        Response: Error message with HTTP 400 if the email field is missing.
+    Start password reset: generate token + uid and send reset link via email.
 
     Security:
-        Prevents user enumeration by not revealing whether the email exists in the system.
+        Avoids user enumeration by always returning 200.
     """
 
     def post(self, request):
+        """
+        Expects:
+            email
+
+        Returns:
+            200 with generic message (email may or may not exist).
+        """
         email = request.data.get("email")
         if not email:
             return Response(
-                {"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST
+                {"error": "Email is required."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
@@ -229,10 +274,9 @@ class UserForgotPasswordView(APIView):
 
             token = Token.objects.get(user=user).key
             uid = int_to_base36(user.id)
-
             reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={uid}&token={token}"
 
-            # Task in die Warteschlange stellen
+            # Queue reset email
             queue = get_queue("default")
             queue.enqueue(
                 send_email_task,
@@ -241,8 +285,8 @@ class UserForgotPasswordView(APIView):
                 "../templates/emails/reset_password_email.html",
                 {"user": user.username, "reset_url": reset_url},
             )
-
         except UserProfile.DoesNotExist:
+            # Swallow error to prevent enumeration
             pass
 
         return Response(
@@ -253,23 +297,17 @@ class UserForgotPasswordView(APIView):
 
 class UserResetPasswordView(APIView):
     """
-    View to handle user password reset requests.
-    Methods:
-    -------
-    post(request):
-        Handles POST requests to reset the user's password.
-    Parameters:
-    ----------
-    request : Request
-        The HTTP request object containing 'uid', 'token', and 'new_password' in the request data.
-    Returns:
-    -------
-    Response
-        A Response object with a success message if the password is reset successfully,
-        or an error message if any validation fails.
+    Complete password reset by validating token + uid and setting the new password.
     """
 
     def post(self, request):
+        """
+        Expects:
+            uid (base36), token, new_password
+
+        Returns:
+            200 on success; 400 with error details otherwise.
+        """
         uid = request.data.get("uid")
         token = request.data.get("token")
         new_password = request.data.get("new_password")
@@ -280,6 +318,7 @@ class UserResetPasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate token → get user
         try:
             user_token = Token.objects.get(key=token)
             user = user_token.user
@@ -289,11 +328,13 @@ class UserResetPasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate base36 uid and match
         try:
             user_id = base36_to_int(uid)
         except ValueError:
             return Response(
-                {"error": "Invalid user ID."}, status=status.HTTP_400_BAD_REQUEST
+                {"error": "Invalid user ID."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if user.id != user_id:
@@ -302,11 +343,13 @@ class UserResetPasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Rotate token, set new password
         user_token.delete()
         Token.objects.get_or_create(user=user)
         user.set_password(new_password)
         user.save()
 
+        # Notify via email
         queue = get_queue("default")
         queue.enqueue(
             send_email_task,
@@ -320,39 +363,3 @@ class UserResetPasswordView(APIView):
             {"message": "Password has been reset successfully."},
             status=status.HTTP_200_OK,
         )
-
-
-class UserLogoutView(APIView):
-    """
-    Logs out the authenticated user by deleting their token.
-
-    Permissions:
-        IsAuthenticated: Requires the user to be logged in.
-
-    Methods:
-        post(request): Deletes the user's authentication token.
-
-    Args:
-        request (Request): The HTTP request from the logged-in user.
-
-    Returns:
-        Response: Success message with HTTP 200 if logout is successful.
-        Response: Error message with HTTP 400 if the token does not exist.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        try:
-            queue = get_queue("default")
-            queue.enqueue(Token.objects.filter(user=request.user).delete)
-            token = Token.objects.get(user=request.user)
-            token.delete()
-            return Response(
-                {"message": "Successfully logged out."}, status=status.HTTP_200_OK
-            )
-        except Token.DoesNotExist:
-            return Response(
-                {"error": "Token not found. User may already be logged out."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )

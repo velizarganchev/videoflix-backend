@@ -1,14 +1,15 @@
+# content_app/api/views.py
 """
 content_app.api.views — Content endpoints for Videoflix
 
 Provides:
-- Listing all videos (cached)
+- Listing all videos (short-lived cached)
 - Retrieving a single video
 - Toggling user's favorite videos
 - Generating signed/public URLs for video streaming (S3 or local media)
 
 Notes:
-- Caching is controlled via settings.CACHE_TTL (fallback to DEFAULT_TIMEOUT).
+- The list endpoint uses a short cache (10s) to reduce DB/ORM load while keeping content fresh.
 - Signed URL generation uses boto3 when USE_S3_MEDIA=True.
 - For public S3 (no querystring auth), direct object URL is returned.
 - For local media, builds absolute URL from current site + MEDIA_URL.
@@ -24,16 +25,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from django.core.cache.backends.base import DEFAULT_TIMEOUT
 from urllib.parse import quote
-
 import boto3
 
 from ..models import Video
 from .serializers import VideoSerializer
-
-# ----- Cache TTL -----
-CACHE_TTL = getattr(settings, "CACHE_TTL", DEFAULT_TIMEOUT)
 
 
 # ==========================
@@ -44,14 +40,15 @@ class GetContentItemsView(APIView):
     Return the full list of videos.
 
     Caching:
-        Response is cached for CACHE_TTL via cache_page decorator.
+        Response is cached for 10 seconds via cache_page decorator.
+        This provides a balance between performance and freshness.
     """
     permission_classes = [IsAuthenticated]
 
-    @method_decorator(cache_page(CACHE_TTL))
+    @method_decorator(cache_page(10))  # short-lived cache: 10 seconds
     def get(self, request):
-        """List all Video objects."""
-        qs = Video.objects.all()
+        """List all Video objects (newest first)."""
+        qs = Video.objects.all().order_by('-created_at')
         ser = VideoSerializer(qs, many=True)
         return Response(ser.data)
 
@@ -172,7 +169,7 @@ class GetVideoSignedUrlView(APIView):
                 bucket=settings.AWS_STORAGE_BUCKET_NAME,
                 region=getattr(settings, "AWS_S3_REGION_NAME", "eu-central-1"),
                 key=key,
-                expires=3600,  # 1 час
+                expires=3600,  # 1 hour
             )
             return Response({"url": url})
 

@@ -1,6 +1,6 @@
 # VideoFlix Backend
 
-[🌍 View Live API](https://videoflix.velizar-ganchev.com)
+[🌍 View Live API](https://api.videoflix-velizar-ganchev-backend.com)
 ---
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Django](https://img.shields.io/badge/Django-5.1-green.svg)](https://www.djangoproject.com/)

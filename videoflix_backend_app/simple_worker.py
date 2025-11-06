@@ -50,7 +50,6 @@ class SimpleWorker(SimpleWorker):
     for simplicity and better compatibility inside certain containers.
     """
 
-    # Disable RQ’s default death penalty mechanism
     death_penalty_class = BaseDeathPenalty
 
     def main_work_horse(self, *args, **kwargs):

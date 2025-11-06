@@ -1,59 +1,40 @@
 """
-Django settings for videoflix_backend_app.
+Django settings for Videoflix backend.
 
-This configuration centralizes:
-- Environment loading (django-environ)
-- Core security and debugging flags
-- Installed apps & middleware
-- URLs, templates, WSGI
-- Redis / RQ / caching
-- Database (Postgres; optional SQLite for local dev)
-- Auth & password validation
-- i18n / timezone
-- Static & media (local; optional AWS S3)
-- DRF, CORS/CSRF, Email
-- Production hardening
-
-Keep secrets and env-specific values in .env or container env vars.
+- Auto ENV selection via ENV_FILE (.env.dev / .env.prod)
+- Auto DB selection → DEBUG=True → SQLite, DEBUG=False → PostgreSQL
+- SimpleJWT (cookie-based auth)
+- RQ worker + Redis config with auto-switch (localhost ↔ redis)
+- CORS/CSRF configured for cookie auth
 """
 
-from pathlib import Path
 import os
+from pathlib import Path
+from datetime import timedelta
 import environ
 
-# ----------------------------------------------------------------------
-# 1. Base & Environment
-# ----------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env()
-env_file = os.path.join(BASE_DIR, ".env")
+env_file = os.getenv("ENV_FILE", ".env.dev")
+
+if not os.path.isabs(env_file):
+    env_file = os.path.join(BASE_DIR, env_file)
+
 if os.path.exists(env_file):
-    # prefer a project-level .env during local dev
     environ.Env.read_env(env_file)
 
-# ----------------------------------------------------------------------
-# 2. Core / Security
-# ----------------------------------------------------------------------
-SECRET_KEY = env.str("SECRET_KEY")
-DEBUG = env.bool("DEBUG", default=False)  # never True in production
+DEBUG = env.bool("DEBUG", default=False)
+SECRET_KEY = env.str("SECRET_KEY", default="dev-secret")
 
 ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS",
-    default=[
-        "localhost",
-        "127.0.0.1",
-        "api.videoflix-velizar-ganchev-backend.com",
-        "videoflix.velizar-ganchev.com",
-    ],
+    default=["localhost", "127.0.0.1"]
 )
 
-# If behind a proxy/load balancer, allow HTTPS detection
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ----------------------------------------------------------------------
-# 3. Applications
-# ----------------------------------------------------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -63,10 +44,10 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     "rest_framework",
-    "rest_framework.authtoken",
     "corsheaders",
     "django_rq",
     "import_export",
+    "rest_framework_simplejwt.token_blacklist",
 
     "users_app",
     "content_app",
@@ -75,15 +56,11 @@ INSTALLED_APPS = [
 if DEBUG:
     INSTALLED_APPS.append("debug_toolbar")
 
-AUTH_USER_MODEL = "users_app.UserProfile"
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ----------------------------------------------------------------------
-# 4. Middleware
-# ----------------------------------------------------------------------
+AUTH_USER_MODEL = "users_app.UserProfile"
+
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
-    "middleware.range_requests.RangeMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -98,9 +75,7 @@ if DEBUG:
 
 INTERNAL_IPS = ["127.0.0.1"]
 
-# ----------------------------------------------------------------------
-# 5. URLs / Templates / WSGI
-# ----------------------------------------------------------------------
+
 ROOT_URLCONF = "videoflix_backend_app.urls"
 
 TEMPLATES = [
@@ -121,193 +96,154 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "videoflix_backend_app.wsgi.application"
 
-# ----------------------------------------------------------------------
-# 6. Redis / RQ / Caching
-# ----------------------------------------------------------------------
-RQ_QUEUES = {
-    "default": {
-        "HOST": env("REDIS_HOST", default="redis"),
-        "PORT": 6379,
-        "DB": 0,
-        "DEFAULT_TIMEOUT": 360,
-    },
-}
-
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": env("REDIS_LOCATION", default="redis://redis:6379/0"),
-        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
-        "KEY_PREFIX": "videoflix",
-    }
-}
-
-# ----------------------------------------------------------------------
-# 7. Database
-# ----------------------------------------------------------------------
 DB_SSL_REQUIRE = env.bool("DB_SSL_REQUIRE", default=False)
 DB_SSL_ROOTCERT = env.str("DB_SSL_ROOTCERT", default="")
 
-_db_options = {}
-if DB_SSL_REQUIRE:
-    _db_options["sslmode"] = "require"
-    if DB_SSL_ROOTCERT:
-        _db_options["sslrootcert"] = DB_SSL_ROOTCERT
-
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql_psycopg2",
-        "NAME": env("DB_NAME"),
-        "USER": env("DB_USER"),
-        "PASSWORD": env("DB_PASSWORD"),
-        "HOST": env("DB_HOST"),
-        "PORT": env("DB_PORT"),
-        "OPTIONS": _db_options,
-    }
-}
-
-if DEBUG and env.bool("USE_SQLITE_LOCAL", default=False):
+if DEBUG:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
         }
     }
+else:
+    options = {}
+    if DB_SSL_REQUIRE:
+        options["sslmode"] = "require"
+        if DB_SSL_ROOTCERT:
+            options["sslrootcert"] = DB_SSL_ROOTCERT
 
-# ----------------------------------------------------------------------
-# 8. Authentication & Password Validation
-# ----------------------------------------------------------------------
-AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
-]
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql_psycopg2",
+            "NAME": env("DB_NAME"),
+            "USER": env("DB_USER"),
+            "PASSWORD": env("DB_PASSWORD"),
+            "HOST": env("DB_HOST"),
+            "PORT": env.int("DB_PORT", default=5432),
+            "OPTIONS": options,
+        }
+    }
 
-# ----------------------------------------------------------------------
-# 9. Localization (i18n / Time zone)
-# ----------------------------------------------------------------------
-LANGUAGE_CODE = "en-us"
-TIME_ZONE = "Europe/Berlin"
-USE_I18N = True
-USE_TZ = True
 
-# ----------------------------------------------------------------------
-# 10. Static & Media
-# ----------------------------------------------------------------------
-STATIC_URL = "/static/"
-STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
-STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+REDIS_URL = env.str("REDIS_URL", default="")
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")  # local; PROD can use S3
+if REDIS_URL:
+    RQ_QUEUES = {"default": {"URL": REDIS_URL, "DEFAULT_TIMEOUT": 360}}
 
-# ----------------------------------------------------------------------
-# 11. REST Framework
-# ----------------------------------------------------------------------
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
-        "rest_framework.authentication.BasicAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-    ],
-    # "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+else:
+    RQ_QUEUES = {
+        "default": {
+            "HOST": env("REDIS_HOST", default=("localhost" if DEBUG else "redis")),
+            "PORT": env.int("REDIS_PORT", default=6379),
+            "DB": env.int("REDIS_DB", default=0),
+            "DEFAULT_TIMEOUT": 360,
+        }
+    }
+
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": env(
+            "REDIS_LOCATION",
+            default=(
+                "redis://localhost:6379/0" if DEBUG else "redis://redis:6379/0"),
+        ),
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        "KEY_PREFIX": "videoflix",
+    }
 }
 
-CACHE_TTL = int(60 * 15)
 
-# ----------------------------------------------------------------------
-# 12. CORS / CSRF
-# ----------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = env.list(
-    "CORS_ALLOWED_ORIGINS",
-    default=[
-        "http://localhost:4200",
-        "https://videoflix.velizar-ganchev.com",
-        "https://api.videoflix-velizar-ganchev-backend.com",
-    ],
-)
+STATIC_URL = "/static/"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
 
-CSRF_TRUSTED_ORIGINS = env.list(
-    "CSRF_TRUSTED_ORIGINS",
-    default=[
-        "https://videoflix.velizar-ganchev.com",
-        "https://api.videoflix-velizar-ganchev-backend.com",
-    ]
-)
+MEDIA_URL = "/media/"
+MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")
 
-# ----------------------------------------------------------------------
-# 13. Email
-# ----------------------------------------------------------------------
-EMAIL_BACKEND = env(
-    "EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
-EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
-EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
-EMAIL_HOST_USER = env.str("EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = env.str("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = env.str("EMAIL_HOST_USER")
 
-FRONTEND_RESET_PASSWORD_URL = env.str("RESET_PASSWORD_URL")
-FRONTEND_LOGIN_URL = env.str("FRONTEND_URL")
-BACKEND_URL = env.str("URL")
-
-# ----------------------------------------------------------------------
-# 14. AWS S3 Media Storage
-# ----------------------------------------------------------------------
 USE_S3_MEDIA = env.bool("USE_S3_MEDIA", default=False)
 
 if USE_S3_MEDIA:
     INSTALLED_APPS.append("storages")
-    AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = env.str("AWS_SECRET_ACCESS_KEY")
-    AWS_STORAGE_BUCKET_NAME = env.str("AWS_STORAGE_BUCKET_NAME")
-    AWS_S3_REGION_NAME = env.str("AWS_S3_REGION_NAME", default="eu-central-1")
-    AWS_S3_QUERYSTRING_AUTH = env.bool(
-        "AWS_S3_QUERYSTRING_AUTH", default=False)
-
-    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+    AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY")
+    AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME")
+    AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default="eu-central-1")
 
     AWS_DEFAULT_ACL = None
     AWS_S3_FILE_OVERWRITE = False
     AWS_S3_SIGNATURE_VERSION = "s3v4"
-    AWS_S3_OBJECT_PARAMETERS = {
-        "CacheControl": "public, max-age=31536000, immutable"}
+    AWS_S3_QUERYSTRING_AUTH = env.bool(
+        "AWS_S3_QUERYSTRING_AUTH", default=False)
 
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
     MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/"
 
-# ----------------------------------------------------------------------
-# 15. Production Hardening
-# ----------------------------------------------------------------------
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "users_app.api.authentication.CookieJWTAuthentication",
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
+}
+
+
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:4200"]
+)
+CORS_ALLOW_CREDENTIALS = env.bool("CORS_ALLOW_CREDENTIALS", default=True)
+
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=["http://localhost:4200"]
+)
+
+
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
+
+
+FRONTEND_LOGIN_URL = env("FRONTEND_URL", default="http://localhost:4200/login")
+FRONTEND_CONFIRM_URL = env("FRONTEND_CONFIRM_URL",
+                           default="http://localhost:4200/confirm")
+FRONTEND_RESET_PASSWORD_URL = env(
+    "RESET_PASSWORD_URL", default="http://localhost:4200/reset-password")
+
+
+JWT_ACCESS_COOKIE_NAME = env("JWT_ACCESS_COOKIE_NAME", default="vf_access")
+JWT_REFRESH_COOKIE_NAME = env("JWT_REFRESH_COOKIE_NAME", default="vf_refresh")
+
+JWT_COOKIE_SAMESITE = env("JWT_COOKIE_SAMESITE", default="None")
+JWT_COOKIE_SECURE = env.bool("JWT_COOKIE_SECURE", default=not DEBUG)
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)
+    SECURE_SSL_REDIRECT = True
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-
-# ----------------------------------------------------------------------
-# 16. Logging (basic)
-# ----------------------------------------------------------------------
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "root": {"handlers": ["console"], "level": "INFO"},
-}
-
-# ----------------------------------------------------------------------
-# 17. Testing Overrides
-# ----------------------------------------------------------------------
-if "PYTEST_CURRENT_TEST" in os.environ:
-    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
-    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
-    CACHES = {
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache"
-        }
-    }
-# ----------------------------------------------------------------------
-
-# End of settings.py — extend via environment variables or local_settings.py

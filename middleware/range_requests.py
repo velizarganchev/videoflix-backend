@@ -12,11 +12,9 @@ class RangeMiddleware(MiddlewareMixin):
         return None
 
     def process_range_request(self, request):
-        # Prüfe, ob die Anfrage unter MEDIA_URL liegt
         if not request.path.startswith(settings.MEDIA_URL):
             return None
 
-        # Relativen Pfad extrahieren
         relative_path = request.path[len(settings.MEDIA_URL):].lstrip('/')
         file_path = os.path.join(settings.MEDIA_ROOT, relative_path)
 
@@ -35,7 +33,6 @@ class RangeMiddleware(MiddlewareMixin):
 
         start_str, end_str = byte_ranges
 
-        # Suffix-Range (z.B. bytes=-500)
         if not start_str:
             if not end_str.isdigit():
                 return HttpResponse(status=400)
@@ -49,7 +46,6 @@ class RangeMiddleware(MiddlewareMixin):
             else:
                 end = int(end_str)
 
-        # Validiere den Bereich
         if start >= file_size or end >= file_size or start > end:
             response = HttpResponse(status=416)
             response['Content-Range'] = f'bytes */{file_size}'
@@ -58,11 +54,9 @@ class RangeMiddleware(MiddlewareMixin):
         end = min(end, file_size - 1)
         content_length = end - start + 1
 
-        # Content-Type ermitteln
         content_type, _ = mimetypes.guess_type(file_path)
         content_type = content_type or 'application/octet-stream'
 
-        # Streaming Response
         response = StreamingHttpResponse(
             self.file_iterator(file_path, start, end),
             status=206,

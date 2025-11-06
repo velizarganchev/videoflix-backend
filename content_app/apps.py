@@ -28,4 +28,4 @@ class ContentAppConfig(AppConfig):
 
     def ready(self):
         """Import signals to ensure they are registered when the app loads."""
-        from . import signals  # noqa: F401
+        from . import signals

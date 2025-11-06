@@ -1,95 +1,70 @@
 """
-serializers.py — User Profile Serializer for Videoflix Backend
+Serializers for Videoflix Users (JWT cookies only, no DRF Token).
 
-Defines the serializer for the custom `UserProfile` model,
-handling registration, password validation, and token generation.
-
-Features:
-- Returns user info plus authentication token
-- Validates unique email and matching passwords
-- Creates users securely via `create_user()`
+- RegisterSerializer: handles user registration and password validation.
+- LoginSerializer: validates user credentials; JWT tokens are issued in the view.
+- UserPublicSerializer: exposes safe, public user data for list/detail responses.
 """
 
+from django.contrib.auth import authenticate, password_validation
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
+
 from ..models import UserProfile
-from rest_framework.authtoken.models import Token
 
 
-class UserProfileSerializer(serializers.ModelSerializer):
+class RegisterSerializer(serializers.ModelSerializer):
     """
-    Serializer for user registration and profile management.
-
-    Includes:
-    - Token generation for authentication
-    - Email and password validation
-    - Write-only password fields for security
+    Responsibilities:
+    - Validates unique email and matching passwords.
+    - Creates an inactive user instance (activation via email confirmation).
+    - Username is not exposed; it is auto-filled with the email.
     """
-
-    token = serializers.SerializerMethodField()
-    confirm_password = serializers.CharField(write_only=True)
+    email = serializers.EmailField(
+        validators=[
+            UniqueValidator(
+                queryset=UserProfile.objects.all(),
+                message="User with this email already exists.",
+            )
+        ]
+    )
+    password = serializers.CharField(
+        write_only=True, style={"input_type": "password"})
+    confirm_password = serializers.CharField(
+        write_only=True, style={"input_type": "password"})
 
     class Meta:
         model = UserProfile
-        fields = [
-            'id',
-            'token',
-            'username',
-            'email',
-            'phone',
-            'address',
-            'favorite_videos',
-            'password',
-            'confirm_password',
-        ]
-        extra_kwargs = {
-            'password': {'write_only': True},
-            'email': {'required': True},
-            'username': {'required': False},
-        }
-
-    def get_token(self, obj):
-        """
-        Retrieve or create an authentication token for the user.
-
-        Called automatically by DRF when serializing the user.
-        Returns:
-            str: Token key associated with the user.
-        """
-        token, created = Token.objects.get_or_create(user=obj)
-        return token.key
+        fields = ["id", "email", "phone", "address",
+                  "password", "confirm_password"]
+        extra_kwargs = {"email": {"required": True}}
 
     def validate(self, data):
         """
-        Validate registration data before user creation.
-
-        Ensures:
-        - Email is unique
-        - Password and confirm_password match
+        - Normalize email.
+        - Ensure password confirmation matches.
+        - Run Django's password validators.
         """
-        if UserProfile.objects.filter(email=data['email']).exists():
-            raise serializers.ValidationError(
-                {"email": "User with this email already exists."}
-            )
+        data["email"] = data["email"].strip().lower()
 
-        if data['password'] != data['confirm_password']:
+        if data.get("password") != data.get("confirm_password"):
             raise serializers.ValidationError(
-                {"password": "Passwords must match."}
-            )
+                {"password": "Passwords must match."})
+
+        password_validation.validate_password(data["password"])
         return data
 
     def create(self, validated_data):
         """
-        Create a new user securely via the custom model manager.
-
-        Removes confirm_password and passes all other validated
-        fields to `UserProfile.objects.create_user()`.
+        Create a new inactive user:
+        - username is auto-set to the email
+        - 'is_active' can be injected via serializer.save(is_active=False) in the view
         """
-        validated_data.pop('confirm_password')
-        email = validated_data.pop('email')
-        password = validated_data.pop('password')
-        is_active = validated_data.pop('is_active', False)
+        validated_data.pop("confirm_password")
+        email = validated_data.pop("email")
+        password = validated_data.pop("password")
+        is_active = validated_data.pop("is_active", False)
 
-        # Create user through model manager (handles password hashing)
         user = UserProfile.objects.create_user(
             username=email,
             email=email,
@@ -98,3 +73,39 @@ class UserProfileSerializer(serializers.ModelSerializer):
             **validated_data,
         )
         return user
+
+
+class LoginSerializer(serializers.Serializer):
+    """
+    Validates login credentials (input-only).
+    Tokens are created and set as HttpOnly cookies in the view.
+    """
+    email = serializers.EmailField()
+    password = serializers.CharField(
+        write_only=True, style={"input_type": "password"})
+
+    def validate(self, attrs):
+        """
+        Normalize email and authenticate using Django's auth system.
+        """
+        email = (attrs.get("email") or "").strip().lower()
+        password = attrs.get("password")
+
+        user = authenticate(username=email, password=password)
+        if not user or not user.is_active:
+            raise serializers.ValidationError(
+                "Invalid credentials or inactive user.")
+
+        attrs["user"] = user
+        return attrs
+
+
+class UserPublicSerializer(serializers.ModelSerializer):
+    """
+    Public-facing serializer for user profiles.
+    Excludes sensitive fields such as password or permissions.
+    """
+    class Meta:
+        model = UserProfile
+        fields = ["id", "username", "email", "phone", "address"]
+        read_only_fields = fields

@@ -27,7 +27,6 @@ class UserProfileAdmin(admin.ModelAdmin):
 
     add_form = UserProfileCreationForm
 
-    # Extend base fieldsets from Django's UserAdmin with custom section
     fieldsets = (
         *UserAdmin.fieldsets,
         (

@@ -1,43 +1,31 @@
-"""
-users_app.api.urls
-
-Defines all API endpoints for user-related actions in the Videoflix backend.
-
-Includes:
-- User registration, confirmation, login, logout
-- Password reset and recovery
-- Profile retrieval (all users and single user)
-"""
-
 from django.urls import path
 from .views import (
-    GetUserProfilesView,
-    GetSingleUserProfileView,
-    UserRegisterView,
-    UserConfirmationView,
-    UserLoginView,
-    UserLogoutView,
-    UserForgotPasswordView,
-    UserResetPasswordView,
+    RegisterView,
+    ConfirmView,
+    ForgotPasswordView,
+    ResetPasswordView,
+
+    JwtLoginView,
+    JwtRefreshView,
+    JwtLogoutView,
+
+    ProfilesListView,
+    SingleProfileView,
 )
-
-# ----------------------------------------------------------------------
-# User API Endpoints
-# ----------------------------------------------------------------------
 urlpatterns = [
-    # --- Profile Management ---
-    path("profiles/", GetUserProfilesView.as_view(), name="profiles"),
-    path("profile/<int:pk>/", GetSingleUserProfileView.as_view(), name="profile"),
+    path("register/", RegisterView.as_view(), name="user-register"),
+    path("confirm/", ConfirmView.as_view(), name="user-confirm"),
 
-    # --- Authentication & Registration ---
-    path("register/", UserRegisterView.as_view(), name="register"),
-    path("confirm/", UserConfirmationView.as_view(), name="user-confirmation"),
-    path("login/", UserLoginView.as_view(), name="login"),
-    path("logout/", UserLogoutView.as_view(), name="logout"),
+    path("forgot-password/", ForgotPasswordView.as_view(),
+         name="user-forgot-password"),
+    path("reset-password/", ResetPasswordView.as_view(),
+         name="user-reset-password"),
 
-    # --- Password Management ---
-    path("forgot-password/", UserForgotPasswordView.as_view(),
-         name="forgot-password"),
-    path("reset-password/", UserResetPasswordView.as_view(),
-         name="reset-password"),
+    path("login/", JwtLoginView.as_view(), name="user-login"),
+    path("refresh/", JwtRefreshView.as_view(), name="user-refresh"),
+    path("logout/", JwtLogoutView.as_view(), name="user-logout"),
+
+    path("profiles/", ProfilesListView.as_view(), name="user-profiles"),
+    path("profiles/<int:pk>/", SingleProfileView.as_view(),
+         name="user-profile-detail"),
 ]

@@ -4,8 +4,9 @@ services:
     pull_policy: always
     command: ["/app/backend.entrypoint.sh", "web"]
     env_file:
-      - .env
+      - .env.prod
     environment:
+      - ENV_FILE=.env.prod 
       - USE_S3_MEDIA=${USE_S3_MEDIA}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

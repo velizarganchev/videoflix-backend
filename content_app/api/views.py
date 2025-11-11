@@ -1,4 +1,3 @@
-# content_app/api/views.py
 """
 content_app.api.views — Content endpoints for Videoflix
 

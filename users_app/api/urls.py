@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    EmailExistsView,
     RegisterView,
     ConfirmView,
     ForgotPasswordView,
@@ -8,11 +9,9 @@ from .views import (
     JwtLoginView,
     JwtRefreshView,
     JwtLogoutView,
-
-    ProfilesListView,
-    SingleProfileView,
 )
 urlpatterns = [
+    path("email-exists/", EmailExistsView.as_view(), name="user-email-exists"),
     path("register/", RegisterView.as_view(), name="user-register"),
     path("confirm/", ConfirmView.as_view(), name="user-confirm"),
 
@@ -24,8 +23,4 @@ urlpatterns = [
     path("login/", JwtLoginView.as_view(), name="user-login"),
     path("refresh/", JwtRefreshView.as_view(), name="user-refresh"),
     path("logout/", JwtLogoutView.as_view(), name="user-logout"),
-
-    path("profiles/", ProfilesListView.as_view(), name="user-profiles"),
-    path("profiles/<int:pk>/", SingleProfileView.as_view(),
-         name="user-profile-detail"),
 ]

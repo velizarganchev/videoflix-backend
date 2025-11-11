@@ -13,6 +13,13 @@ from rest_framework.validators import UniqueValidator
 from ..models import UserProfile
 
 
+class EmailQuerySerializer(serializers.Serializer):
+    """
+    Validate the email query parameter for 'email exists' checks.
+    """
+    email = serializers.EmailField(required=True)
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     """
     Responsibilities:

@@ -3,7 +3,6 @@ User management endpoints for the Videoflix backend.
 
 Implements authentication and user lifecycle flows using:
 - Django REST Framework (DRF)
-- SimpleJWT for token-based authentication
 - RQ background tasks for sending emails
 
 Endpoints:
@@ -26,21 +25,41 @@ from django.conf import settings
 from rest_framework import status
 from rest_framework.generics import (
     CreateAPIView,
-    ListAPIView,
-    RetrieveAPIView,
     GenericAPIView,
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import AnonRateThrottle
 
 from django_rq import get_queue
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError, AccessToken
 
 from ..models import UserProfile
-from .serializers import UserPublicSerializer, RegisterSerializer, LoginSerializer
+from .serializers import EmailQuerySerializer, UserPublicSerializer, RegisterSerializer, LoginSerializer
 from ..tasks import send_email_task
 from .auth import set_auth_cookies, clear_auth_cookies
+
+
+class EmailExistsView(APIView):
+    """
+    GET /users/email-exists/?email=<addr>
+    Returns: { "exists": true|false }
+
+    Notes:
+    - Public endpoint; validates email format.
+    - Case-insensitive lookup.
+    - Throttled to reduce enumeration risk.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [AnonRateThrottle]
+
+    def get(self, request):
+        ser = EmailQuerySerializer(data=request.query_params)
+        ser.is_valid(raise_exception=True)
+        email = ser.validated_data["email"].strip().lower()
+        exists = UserProfile.objects.filter(email__iexact=email).exists()
+        return Response({"exists": exists}, status=200)
 
 
 class RegisterView(CreateAPIView):
@@ -56,30 +75,40 @@ class RegisterView(CreateAPIView):
     queryset = UserProfile.objects.all()
 
     def perform_create(self, serializer):
-        """
-        Save a new user as inactive and send confirmation email asynchronously.
-        """
         user: UserProfile = serializer.save(is_active=False)
-
         token = str(RefreshToken.for_user(user).access_token)
         uid = int_to_base36(user.id)
         confirmation_url = f"{settings.FRONTEND_CONFIRM_URL}?uid={uid}&token={token}"
 
-        queue = get_queue("default")
-        queue.enqueue(
-            send_email_task,
-            "Confirm Your Videoflix Account",
-            [user.email],
-            "emails/confirmation_email.html",
-            {"user": user.username, "confirmation_url": confirmation_url},
-        )
+        if settings.DEBUG:
+            self._debug_confirm = {
+                "uid": uid,
+                "token": token,
+                "confirmation_url": confirmation_url,
+            }
+            send_email_task(
+                "Confirm Your Videoflix Account",
+                [user.email],
+                "emails/confirmation_email.html",
+                {"user": user.username, "confirmation_url": confirmation_url},
+            )
+        else:
+            queue = get_queue("default")
+            queue.enqueue(
+                send_email_task,
+                "Confirm Your Videoflix Account",
+                [user.email],
+                "emails/confirmation_email.html",
+                {"user": user.username, "confirmation_url": confirmation_url},
+            )
 
     def create(self, request, *args, **kwargs):
-        """
-        Return only the email field to avoid leaking unnecessary data.
-        """
         response = super().create(request, *args, **kwargs)
-        return Response({"email": response.data.get("email")}, status=status.HTTP_201_CREATED)
+        payload = {"email": response.data.get("email")}
+
+        if settings.DEBUG and hasattr(self, "_debug_confirm"):
+            payload["debug"] = self._debug_confirm
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class ConfirmView(APIView):
@@ -102,7 +131,6 @@ class ConfirmView(APIView):
         try:
             user_id = base36_to_int(uid)
 
-            # Validate token and ensure it belongs to the same user
             at = AccessToken(token)
             if int(at.get("user_id")) != user_id:
                 return Response({"error": "Token does not match user."}, status=400)
@@ -118,6 +146,73 @@ class ConfirmView(APIView):
             user.save(update_fields=["is_active"])
 
         return HttpResponseRedirect(settings.FRONTEND_LOGIN_URL)
+
+
+class JwtRefreshView(APIView):
+    """
+    POST /users/refresh/
+    Uses the refresh cookie to issue a new access token.
+    If ROTATE_REFRESH_TOKENS is enabled, mints a new refresh too (and
+    blacklists the old one when BLACKLIST_AFTER_ROTATION is enabled).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_cookie_name = getattr(
+            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh")
+        raw_refresh = request.COOKIES.get(refresh_cookie_name)
+        if not raw_refresh:
+            return Response({"error": "Missing refresh cookie."}, status=401)
+
+        try:
+            refresh = RefreshToken(raw_refresh)
+        except TokenError:
+            return Response({"error": "Invalid refresh token."}, status=401)
+
+        # Always create a fresh access token
+        access = str(refresh.access_token)
+        resp = Response({"detail": "Access token refreshed."}, status=200)
+        resp.set_cookie(
+            getattr(settings, "JWT_ACCESS_COOKIE_NAME", "vf_access"),
+            access,
+            max_age=5 * 60,
+            httponly=True,
+            secure=getattr(settings, "JWT_COOKIE_SECURE", True),
+            samesite=getattr(settings, "JWT_COOKIE_SAMESITE", "Lax"),
+            path="/",
+        )
+
+        # Optional rotation + blacklist (do this manually; no .rotate() call)
+        rotate = settings.SIMPLE_JWT.get("ROTATE_REFRESH_TOKENS", False)
+        blacklist_after = settings.SIMPLE_JWT.get(
+            "BLACKLIST_AFTER_ROTATION", False)
+
+        if rotate:
+            if blacklist_after:
+                try:
+                    refresh.blacklist()
+                except Exception:
+                    # blacklist app not installed or already blacklisted
+                    pass
+
+            try:
+                user_id = int(refresh.get("user_id"))
+                user = UserProfile.objects.get(pk=user_id)
+                new_refresh = RefreshToken.for_user(user)
+                resp.set_cookie(
+                    refresh_cookie_name,
+                    str(new_refresh),
+                    max_age=7 * 24 * 60 * 60,
+                    httponly=True,
+                    secure=getattr(settings, "JWT_COOKIE_SECURE", True),
+                    samesite=getattr(settings, "JWT_COOKIE_SAMESITE", "Lax"),
+                    path="/",
+                )
+            except Exception:
+                # If anything fails, still return the new access token
+                pass
+
+        return resp
 
 
 class JwtLoginView(APIView):
@@ -146,73 +241,21 @@ class JwtLoginView(APIView):
         return response
 
 
-class JwtRefreshView(APIView):
-    """
-    POST /users/refresh/
-    Issues a new access token from the existing refresh cookie.
-
-    The new access token is also stored in an HttpOnly cookie.
-    """
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        cookie_name = getattr(
-            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh")
-        raw_refresh = request.COOKIES.get(cookie_name)
-        if not raw_refresh:
-            return Response({"error": "Missing refresh cookie."}, status=401)
-
-        try:
-            refresh = RefreshToken(raw_refresh)
-            access = str(refresh.access_token)
-        except TokenError:
-            return Response({"error": "Invalid refresh token."}, status=401)
-
-        response = Response({"detail": "Access token refreshed."}, status=200)
-        response.set_cookie(
-            getattr(settings, "JWT_ACCESS_COOKIE_NAME", "vf_access"),
-            access,
-            max_age=5 * 60,
-            httponly=True,
-            secure=getattr(settings, "JWT_COOKIE_SECURE", True),
-            samesite=getattr(settings, "JWT_COOKIE_SAMESITE", "Lax"),
-            path="/",
-        )
-        return response
-
-
 class JwtLogoutView(APIView):
-    """
-    POST /users/logout/
-    Logs out the user by clearing authentication cookies.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        response = Response(
-            {"message": "Successfully logged out."}, status=200)
-        clear_auth_cookies(response)
-        return response
-
-
-class ProfilesListView(ListAPIView):
-    """
-    GET /users/profiles/
-    Lists all user profiles.
-    """
-    permission_classes = [IsAuthenticated]
-    serializer_class = UserPublicSerializer
-    queryset = UserProfile.objects.all()
-
-
-class SingleProfileView(RetrieveAPIView):
-    """
-    GET /users/profiles/<pk>/
-    Retrieves details for a specific user profile.
-    """
-    permission_classes = [IsAuthenticated]
-    serializer_class = UserPublicSerializer
-    queryset = UserProfile.objects.all()
+        refresh_cookie_name = getattr(
+            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh")
+        raw_refresh = request.COOKIES.get(refresh_cookie_name)
+        if raw_refresh:
+            try:
+                RefreshToken(raw_refresh).blacklist()
+            except Exception:
+                pass
+        resp = Response({"message": "Successfully logged out."}, status=200)
+        clear_auth_cookies(resp)
+        return resp
 
 
 class ForgotPasswordView(GenericAPIView):
@@ -236,15 +279,28 @@ class ForgotPasswordView(GenericAPIView):
         uid = int_to_base36(user.id)
         reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={uid}&token={token}"
 
-        queue = get_queue("default")
-        queue.enqueue(
-            send_email_task,
-            "Reset Your Password",
-            [user.email],
-            "emails/reset_password_email.html",
-            {"user": user.username, "reset_url": reset_url},
-        )
-        return Response({"message": "If this email exists, a reset link has been sent."}, status=200)
+        if settings.DEBUG:
+            send_email_task(
+                "Reset Your Password",
+                [user.email],
+                "emails/reset_password_email.html",
+                {"user": user.username, "reset_url": reset_url},
+            )
+        else:
+            queue = get_queue("default")
+            queue.enqueue(
+                send_email_task,
+                "Reset Your Password",
+                [user.email],
+                "emails/reset_password_email.html",
+                {"user": user.username, "reset_url": reset_url},
+            )
+
+        payload = {"message": "If this email exists, a reset link has been sent."}
+        if settings.DEBUG:
+            payload["debug"] = {"uid": uid,
+                                "token": token, "reset_url": reset_url}
+        return Response(payload, status=200)
 
 
 class ResetPasswordView(GenericAPIView):

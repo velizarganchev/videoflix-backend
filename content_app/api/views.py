@@ -51,29 +51,11 @@ class GetContentItemsView(APIView):
         ser = VideoSerializer(qs, many=True)
         return Response(ser.data)
 
-
-class GetSingleContentItemView(APIView):
-    """
-    Return a single video by primary key.
-
-    Raises:
-        Http404: If the video does not exist.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, pk):
-        """Retrieve one Video instance by id (pk)."""
-        try:
-            obj = Video.objects.get(pk=pk)
-        except Video.DoesNotExist:
-            raise Http404("Video not found")
-        ser = VideoSerializer(obj)
-        return Response(ser.data)
-
-
 # ==========================
 # FAVORITES TOGGLE
 # ==========================
+
+
 class AddFavoriteVideoView(APIView):
     """
     Toggle a video in the authenticated user's favorites.

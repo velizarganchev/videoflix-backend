@@ -11,6 +11,7 @@ Django settings for Videoflix backend.
 import os
 from pathlib import Path
 from datetime import timedelta
+from corsheaders.defaults import default_headers
 import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -221,6 +222,10 @@ CSRF_TRUSTED_ORIGINS = env.list(
     "CSRF_TRUSTED_ORIGINS",
     default=["http://localhost:4200", "http://127.0.0.1:4200"]
 )
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "x-retry",
+]
 
 EMAIL_BACKEND = env(
     "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")

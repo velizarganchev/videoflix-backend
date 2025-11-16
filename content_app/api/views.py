@@ -1,19 +1,13 @@
 """
-content_app.api.views — Content endpoints for Videoflix
+content_app.api.views — Content endpoints for Videoflix.
 
 Provides:
-- Listing all videos (short-lived cached)
-- Retrieving a single video
-- Toggling user's favorite videos
-- Generating signed/public URLs for video streaming (S3 or local media)
-
-Notes:
-- The list endpoint uses a short cache (10s) to reduce DB/ORM load while keeping content fresh.
-- Signed URL generation uses boto3 when USE_S3_MEDIA=True.
-- For public S3 (no querystring auth), direct object URL is returned.
-- For local media, builds absolute URL from current site + MEDIA_URL.
+- GetContentItemsView: list all videos for authenticated users (cached).
+- AddFavoriteVideoView: toggle a video in the user's favorites.
+- GetVideoSignedUrlView: return a streaming URL (S3 signed/public or local).
 """
 
+from urllib.parse import quote
 from django.conf import settings
 from django.http import Http404
 from django.utils.decorators import method_decorator
@@ -24,57 +18,67 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from urllib.parse import quote
-import boto3
-
 from ..models import Video
 from .serializers import VideoSerializer
 
 
 # ==========================
-# LIST + DETAIL
+# LIST
 # ==========================
 class GetContentItemsView(APIView):
     """
-    Return the full list of videos.
+    Return a list of all Video objects, ordered by creation date (newest first).
 
+    Access:
+        - Authenticated users only.
     Caching:
-        Response is cached for 10 seconds via cache_page decorator.
-        This provides a balance between performance and freshness.
+        - Response is cached for a short time to reduce DB load.
     """
     permission_classes = [IsAuthenticated]
 
-    @method_decorator(cache_page(10))  # short-lived cache: 10 seconds
+    @method_decorator(cache_page(5))
     def get(self, request):
-        """List all Video objects (newest first)."""
-        qs = Video.objects.all().order_by('-created_at')
-        ser = VideoSerializer(qs, many=True)
+        """
+        GET /api/content/
+
+        Returns:
+            - 200 OK with serialized list of videos.
+        """
+        qs = Video.objects.all().order_by("-created_at")
+        ser = VideoSerializer(qs, many=True, context={"request": request})
         return Response(ser.data)
+
 
 # ==========================
 # FAVORITES TOGGLE
 # ==========================
-
-
 class AddFavoriteVideoView(APIView):
     """
-    Toggle a video in the authenticated user's favorites.
+    Toggle a Video in the authenticated user's favorites list.
 
-    Expects:
-        POST body with "video_id".
+    Behavior:
+        - If the video is already a favorite → remove it.
+        - If not → add it.
     Returns:
-        List of favorite video IDs for the current user.
+        - The list of favorite video IDs for the user.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """Add or remove the given video from user's favorites."""
+        """
+        POST /api/content/favorites/
+
+        Expected payload:
+            {
+                "video_id": <int>
+            }
+        """
         user = request.user
         video_id = request.data.get("video_id")
         if not video_id:
             return Response(
                 {"message": "Video ID is required."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
@@ -82,9 +86,10 @@ class AddFavoriteVideoView(APIView):
         except Video.DoesNotExist:
             return Response(
                 {"message": "Video not found"},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
+        # Toggle favorite state
         if video in user.favorite_videos.all():
             user.favorite_videos.remove(video)
         else:
@@ -95,26 +100,36 @@ class AddFavoriteVideoView(APIView):
 
 
 # ==========================
-# SIGNED / PUBLIC URLs FOR VIDEO
+# SIGNED / PUBLIC / LOCAL URL
 # ==========================
 class GetVideoSignedUrlView(APIView):
     """
-    Build a playable URL for a video (by quality), either:
-    - S3 public object URL (if AWS_S3_QUERYSTRING_AUTH=False),
-    - S3 presigned URL (if AWS_S3_QUERYSTRING_AUTH=True),
-    - or local MEDIA URL when not using S3.
+    Return a streaming URL for a video in a given quality.
 
-    Expects:
-        Query param "quality" in {"120p","360p","720p","1080p"} or omitted/None.
+    Behavior:
+        - If using S3:
+            * Public bucket (no querystring auth) → direct HTTPS URL.
+            * Private bucket (querystring auth) → presigned URL.
+        - If using local MEDIA:
+            * Build an absolute URL to the media file.
 
-    Raises:
-        Http404: if video/quality/key not present.
+    Access:
+        - Authenticated users only.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        """Return a JSON object with {"url": "<resolved video URL>"}."""
-        # '120p' | '360p' | '720p' | '1080p' | None
+        """
+        GET /api/content/videos/<pk>/signed-url/?quality=360p
+
+        Query params:
+            - quality (optional): e.g. "120p", "360p", "720p", "1080p".
+              If omitted, delegated to Video.get_key_for_quality.
+
+        Returns:
+            - 200 OK with {"url": "<string>"} on success.
+            - 404 if video or requested quality is not available.
+        """
         quality = request.GET.get("quality")
 
         try:
@@ -131,52 +146,65 @@ class GetVideoSignedUrlView(APIView):
         if not key:
             raise Http404("Requested quality not available")
 
-        key = self.normalize_s3_key(key)
+        key = self.normalize_key(key)
 
-        # S3 media path
+        # S3 path
         if getattr(settings, "USE_S3_MEDIA", False):
-            # Public bucket (no querystring auth) → static URL
-            if getattr(settings, "AWS_S3_QUERYSTRING_AUTH", False) is False:
-                url = self.build_public_s3_url(
-                    bucket=settings.AWS_STORAGE_BUCKET_NAME,
-                    region=getattr(
-                        settings, "AWS_S3_REGION_NAME", "eu-central-1"),
-                    key=key,
-                )
-                return Response({"url": url})
+            from boto3 import client as boto3_client
 
-            # Private bucket → presigned URL with expiry
-            url = self.build_presigned_url(
-                bucket=settings.AWS_STORAGE_BUCKET_NAME,
-                region=getattr(settings, "AWS_S3_REGION_NAME", "eu-central-1"),
-                key=key,
-                expires=3600,  # 1 hour
+            # Public bucket (no querystring auth)
+            if getattr(settings, "AWS_S3_QUERYSTRING_AUTH", False) is False:
+                return Response(
+                    {
+                        "url": self.build_public_s3_url(
+                            bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                            region=getattr(
+                                settings, "AWS_S3_REGION_NAME", "eu-central-1"
+                            ),
+                            key=key,
+                        )
+                    }
+                )
+
+            # Private → presigned URL
+            s3 = boto3_client(
+                "s3",
+                region_name=getattr(
+                    settings, "AWS_S3_REGION_NAME", "eu-central-1"
+                ),
+            )
+            url = s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
+                    "Key": key,
+                    "ResponseContentDisposition": "inline",
+                },
+                ExpiresIn=3600,
             )
             return Response({"url": url})
 
-        # Local media fallback (non-S3)
-        from django.contrib.sites.shortcuts import get_current_site
-        host = get_current_site(request).domain
+        # Local MEDIA path
+        host = request.get_host()
         scheme = "https" if request.is_secure() else "http"
         media_url = settings.MEDIA_URL.rstrip("/")
         url = f"{scheme}://{host}{media_url}/{quote(key)}"
         return Response({"url": url})
 
-    # ------- helpers -------
+    # helpers
     def get_key_from_model(self, video: Video, quality: str | None):
         """
-        Return storage key for requested quality using model helper.
-
-        Delegates to: Video.get_key_for_quality(quality)
+        Delegate to the Video model to resolve the storage key
+        for the given quality (or default).
         """
         return video.get_key_for_quality(quality)
 
-    def normalize_s3_key(self, key: str) -> str:
+    def normalize_key(self, key: str) -> str:
         """
         Normalize a storage key:
-        - remove leading slash,
-        - fix accidental '/.mp4' to '.mp4',
-        - collapse double slashes.
+        - strip leading slashes
+        - fix accidental '/.mp4' patterns
+        - collapse duplicate slashes
         """
         key = (key or "").lstrip("/")
         key = key.replace("/.mp4", ".mp4")
@@ -185,20 +213,8 @@ class GetVideoSignedUrlView(APIView):
         return key
 
     def build_public_s3_url(self, bucket: str, region: str, key: str) -> str:
-        """Return direct public S3 object URL (no querystring)."""
+        """
+        Build a public HTTPS URL to an S3 object for non-signed access.
+        """
         safe_key = quote(key)
         return f"https://{bucket}.s3.{region}.amazonaws.com/{safe_key}"
-
-    def build_presigned_url(self, bucket: str, region: str, key: str, expires: int = 3600) -> str:
-        """Generate an expiring S3 presigned URL for the given object key."""
-        s3 = boto3.client("s3", region_name=region)
-        return s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": bucket,
-                "Key": key,
-                "ResponseContentDisposition": "inline",
-                # "ResponseContentType": "video/mp4",
-            },
-            ExpiresIn=expires,
-        )

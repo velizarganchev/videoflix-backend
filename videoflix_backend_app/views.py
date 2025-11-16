@@ -34,20 +34,18 @@ def health_check(request):
         }
     """
     try:
-        # Simple DB query to confirm database connection
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
         db_status = "ok"
     except Exception as e:
         db_status = f"error: {str(e)}"
 
-    # TODO: Extend with actual Redis health check when Redis is active
     return JsonResponse(
         {
             "status": "ok" if db_status == "ok" else "error",
             "components": {
                 "database": db_status,
-                "cache": "ok",  # Placeholder; replace with Redis check
+                "cache": "ok",
             },
         },
         status=200 if db_status == "ok" else 503,

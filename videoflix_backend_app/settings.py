@@ -130,7 +130,6 @@ REDIS_URL = env.str("REDIS_URL", default="")
 
 if REDIS_URL:
     RQ_QUEUES = {"default": {"URL": REDIS_URL, "DEFAULT_TIMEOUT": 360}}
-
 else:
     RQ_QUEUES = {
         "default": {
@@ -155,7 +154,6 @@ CACHES = {
     }
 }
 
-
 STATIC_URL = "/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
@@ -163,8 +161,22 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")
 
-
+# -----------------------------
+# Storage: S3 vs Local
+# -----------------------------
 USE_S3_MEDIA = env.bool("USE_S3_MEDIA", default=False)
+
+# Backend origin for building absolute URLs (only in DEBUG + local media)
+if DEBUG and not USE_S3_MEDIA:
+    BACKEND_ORIGIN = env("BACKEND_ORIGIN", default="http://127.0.0.1:8000")
+
+# -----------------------------
+# Local transcoding settings (FFmpeg)
+# -----------------------------
+TRANSCODE_LOCALLY = env.bool("TRANSCODE_LOCALLY", default=True)
+
+# Path to FFmpeg binary if not in PATH
+FFMPEG_BIN = env.str("FFMPEG_BIN", default="ffmpeg")
 
 if USE_S3_MEDIA:
     INSTALLED_APPS.append("storages")
@@ -199,7 +211,6 @@ REST_FRAMEWORK = {
     },
 }
 
-
 CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:4200", "http://127.0.0.1:4200"]
@@ -211,10 +222,8 @@ CSRF_TRUSTED_ORIGINS = env.list(
     default=["http://localhost:4200", "http://127.0.0.1:4200"]
 )
 
-
 EMAIL_BACKEND = env(
-    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
-)
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
 EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
@@ -222,13 +231,11 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
 
-
 FRONTEND_LOGIN_URL = env("FRONTEND_URL", default="http://localhost:4200/login")
 FRONTEND_CONFIRM_URL = env("FRONTEND_CONFIRM_URL",
                            default="http://localhost:4200/confirm")
 FRONTEND_RESET_PASSWORD_URL = env(
     "RESET_PASSWORD_URL", default="http://localhost:4200/reset-password")
-
 
 JWT_ACCESS_COOKIE_NAME = env("JWT_ACCESS_COOKIE_NAME", default="vf_access")
 JWT_REFRESH_COOKIE_NAME = env("JWT_REFRESH_COOKIE_NAME", default="vf_refresh")
@@ -246,6 +253,7 @@ SIMPLE_JWT = {
 }
 
 if DEBUG:
+    # При теб това трябва да е True, за да вървят cookie-тата през Chrome.
     JWT_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False

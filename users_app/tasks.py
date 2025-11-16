@@ -32,11 +32,9 @@ def send_email_task(subject, recipient_list, template_name, context):
         - Sends the email using Django's EmailMultiAlternatives.
         - Falls back to a plain-text message ("Please check your email.") if HTML fails.
     """
-    # Render the HTML template with context variables
     html_content = render_to_string(template_name, context)
     from_email = settings.DEFAULT_FROM_EMAIL
 
-    # Construct and attach the email content
     email_message = EmailMultiAlternatives(
         subject,
         "Please check your email.",
@@ -45,9 +43,7 @@ def send_email_task(subject, recipient_list, template_name, context):
     )
     email_message.attach_alternative(html_content, "text/html")
 
-    # Attempt to send the email and log any errors
     try:
         email_message.send()
     except Exception as e:
-        # Optional: Replace print with proper logging in production
         print(f"Error sending email: {e}")

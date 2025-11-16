@@ -182,7 +182,6 @@ class JwtRefreshView(APIView):
             path="/",
         )
 
-        # Optional rotation + blacklist (do this manually; no .rotate() call)
         rotate = settings.SIMPLE_JWT.get("ROTATE_REFRESH_TOKENS", False)
         blacklist_after = settings.SIMPLE_JWT.get(
             "BLACKLIST_AFTER_ROTATION", False)
@@ -192,7 +191,6 @@ class JwtRefreshView(APIView):
                 try:
                     refresh.blacklist()
                 except Exception:
-                    # blacklist app not installed or already blacklisted
                     pass
 
             try:
@@ -209,7 +207,6 @@ class JwtRefreshView(APIView):
                     path="/",
                 )
             except Exception:
-                # If anything fails, still return the new access token
                 pass
 
         return resp

@@ -10,5 +10,22 @@ allowing superusers to view, edit, and manage video entries.
 from django.contrib import admin
 from .models import Video
 
-# Register the Video model for admin management
-admin.site.register(Video)
+
+@admin.register(Video)
+class VideoAdmin(admin.ModelAdmin):
+    list_display = ("title", "category", "created_at", "id")
+    fields = (
+        "title",
+        "description",
+        "category",
+        "video_file",
+        "image_file",
+        "converted_files",
+        "created_at",
+    )
+
+    readonly_fields = (
+        "image_file",
+        "converted_files",
+        "created_at",
+    )

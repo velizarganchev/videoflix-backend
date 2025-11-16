@@ -15,14 +15,12 @@ class CookieJWTAuthentication(JWTAuthentication):
     """
 
     def authenticate(self, request):
-        # 1) Try to authenticate using JWT from HttpOnly cookie
         cookie_name = getattr(settings, "JWT_ACCESS_COOKIE_NAME", "vf_access")
         raw_token = request.COOKIES.get(cookie_name)
         if raw_token:
             validated = self.get_validated_token(raw_token)
             return (self.get_user(validated), validated)
 
-        # 2) Fallback: standard Bearer token from Authorization header
         header = self.get_header(request)
         if header is None:
             return None

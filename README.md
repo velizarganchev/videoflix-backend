@@ -1,240 +1,229 @@
 # VideoFlix Backend
 
-[🌍 View Live API](https://api.videoflix-velizar-ganchev-backend.com)
+[🌍 Live API](https://api.videoflix-velizar-ganchev-backend.com)
+
+## Overview
+VideoFlix Backend is a production‑ready Django 5 + DRF backend for a video‑streaming platform.  
+It provides authentication, email workflows, video management, S3‑based media storage, background processing (FFmpeg + Redis RQ), and a complete Docker/Nginx/Certbot deployment stack.
+
+A separate Angular 18 frontend can be found here:  
+👉 **https://github.com/velizarganchev/videoflix-frontend**
+
 ---
-[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Django](https://img.shields.io/badge/Django-5.1-green.svg)](https://www.djangoproject.com/)
-[![DRF](https://img.shields.io/badge/DRF-3.15-red.svg)](https://www.django-rest-framework.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
-[![Redis](https://img.shields.io/badge/Redis-Cache%20%2B%20RQ-red.svg)](https://redis.io/)
-[![License](https://img.shields.io/badge/License-Custom-lightgrey.svg)](#license)
-
-A production-ready Django + Django REST Framework backend for a video streaming platform. It provides user auth and email workflows, content management, S3-backed media storage with optional signed URLs, background video processing via RQ workers (FFmpeg), Redis caching, and a Dockerized deployment stack fronted by Nginx and Certbot.
-
 
 ## Features
 
-- Authentication & Users
-  - Token-based auth (DRF TokenAuthentication)
-  - Registration with email confirmation
-  - Login/Logout, password reset (email link)
-  - User profile with favorites (ManyToMany to videos)
+### 🔐 Authentication
+- Registration with email confirmation  
+- Login / Logout using secure HttpOnly cookies  
+- Password reset (email link)  
+- User profile + favorites list
 
-- Video Content API
-  - List videos, retrieve single video
-  - Toggle favorites per user
-  - Get video playback URL
-    - Local storage: direct URL under `/media/`
-    - S3 storage: public or pre-signed URL
+### 🎬 Video API
+- List all videos (cached)
+- Toggle favorites
+- Return playback URL:
+  - Local media → `/media/...`
+  - S3 media → public or presigned URLs
 
-- Media & Processing
-  - Image and video stored in S3 (when enabled)
-  - Background tasks using RQ/Redis
-  - FFmpeg-based transcoding helpers (120p/360p/720p/1080p)
-  - Auto-thumbnail generation on create (via MoviePy) when possible
+### 🖼 Media Processing
+- FFmpeg transcoding (120p/360p/720p/1080p)
+- Automatic thumbnail generation
+- Background workers using Redis RQ
+- Local or S3 storage
 
-- Performance & Ops
-  - Redis-backed cache with per-view caching
-  - Health endpoints: `/health` (app), `/healthz` (nginx)
-  - Admin, django-import-export, (optional) debug toolbar
+### ⚙️ DevOps & Performance
+- Nginx reverse proxy + HTTPS (Certbot)
+- Health endpoints
+- Dockerized orchestration (web, redis, worker, nginx)
+- Automatic migrations, collectstatic, superuser bootstrap
 
-- Dockerized Deployment
-  - Services: web (Gunicorn), rq_worker, redis, nginx, certbot
-  - Automatic migrations, collectstatic, and superuser bootstrap
-  - HTTPS with Let’s Encrypt via Certbot (volumes for cert persistence)
+---
 
+## Project Structure
 
-## Technologies
+```
+videoflix_backend_app/    # Settings, URLs, WSGI, middleware
+users_app/                # Authentication, profiles, email flows
+content_app/              # Video model, API, tasks, S3 helpers
+middleware/               # Range request middleware
+static/ staticfiles/      # Built static assets
+uploads/                  # Local media (dev)
+backend.entrypoint.sh     # Entry for web/worker containers
+docker-compose.yml
+Dockerfile
+nginx.conf
+```
 
-- Python 3.12, Django 5.1, Django REST Framework 3.15
-- Redis 5+ (cache + RQ queues)
-- RQ workers for background jobs
-- FFmpeg, MoviePy for video handling
-- PostgreSQL (prod) / SQLite (optional local dev)
-- Nginx as reverse proxy + TLS termination (Certbot)
-- AWS S3 (django-storages) for media (optional)
-- Docker & docker-compose for orchestration
+---
 
+## Environment Configuration
 
-## Project structure (high level)
+Two example environment files are provided:
 
-- `videoflix_backend_app/` – settings, URLs, WSGI, simple RQ worker
-- `users_app/` – custom `UserProfile`, auth flows, email tasks
-- `content_app/` – `Video` model, API, S3 helpers, video tasks
-- `middleware/` – range requests middleware for media
-- `static/`, `staticfiles/`, `uploads/` – static & media structure
-- `backend.entrypoint.sh` – DB migrate, collectstatic, start web/worker
-- `docker-compose.yml`, `Dockerfile`, `nginx.conf` – deployment stack
+- `.env.example.dev` → local development (local media, console email, SQLite/Postgres)
+- `.env.example.prod` → production (S3, HTTPS, RDS, secure cookies)
 
+Copy the one you need:
+```bash
+cp .env.example.dev .env
+# or
+cp .env.example.prod .env
+```
 
-## Configuration
+---
 
-Environment variables are read via `django-environ` and `.env`. Common settings:
+## Local Development (without Docker)
 
-- Core
-  - `SECRET_KEY`
-  - `DEBUG` (true/false)
-  - `ALLOWED_HOSTS` (CSV)
+### Requirements
+- Python 3.12
+- Redis 5+
+- PostgreSQL OR SQLite
+- FFmpeg installed
 
-- Database (PostgreSQL)
-  - `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`
-  - `USE_SQLITE_LOCAL` (true/false) – optional for local dev when `DEBUG=true`
-
-- Redis / Cache / RQ
-  - `REDIS_HOST` (default `redis` in Docker)
-  - `REDIS_LOCATION` (default `redis://redis:6379/0`)
-
-- CORS / CSRF
-  - `CORS_ALLOWED_ORIGINS` (CSV)
-  - `CSRF_TRUSTED_ORIGINS` (CSV)
-
-- Email
-  - `EMAIL_BACKEND` (default SMTP)
-  - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`
-  - `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`
-  - `DEFAULT_FROM_EMAIL`
-  - `RESET_PASSWORD_URL` (frontend route)
-  - `FRONTEND_URL` (login redirect)
-  - `URL` (backend base URL)
-
-- S3 Media (optional)
-  - `USE_S3_MEDIA` (true/false)
-  - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
-  - `AWS_STORAGE_BUCKET_NAME`
-  - `AWS_S3_REGION_NAME` (e.g. `eu-central-1`)
-  - `AWS_S3_QUERYSTRING_AUTH` (false for public URLs, true for signed)
-
-- Bootstrap (Docker)
-  - `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD`, `DJANGO_SUPERUSER_EMAIL`
-
-> Note (Windows local dev): make sure your Redis server is v5+ if you run it locally. Alternatively, run everything via Docker.
-
-
-## Installation (Local, without Docker)
-
-Prerequisites: Python 3.12, PostgreSQL (or SQLite), Redis 5+
+### Steps
 
 ```bash
-# 1) Create and activate venv
+# Create venv
 python -m venv env
-./env/Scripts/activate  # Windows
+source env/bin/activate   # or ./env/Scripts/activate on Windows
 
-# 2) Install deps
+# Install dependencies
 pip install -r requirements.txt
 
-# 3) Configure environment
-copy NUL .env  # create an empty .env on Windows, then fill variables
+# Create .env file
+cp .env.example.dev .env
+# edit values if needed
 
-# Minimal .env example (edit values):
-# SECRET_KEY=change-me
-# DEBUG=true
-# ALLOWED_HOSTS=localhost,127.0.0.1
-# USE_SQLITE_LOCAL=true
-# EMAIL_HOST_USER=your@email
-# EMAIL_HOST_PASSWORD=your-app-password
-# RESET_PASSWORD_URL=http://localhost:4200/reset-password
-# FRONTEND_URL=http://localhost:4200/login
-# URL=http://localhost:8000
-
-# 4) Migrate & run
+# Run migrations
 python manage.py migrate
+
+# Create superuser (optional)
 python manage.py createsuperuser
+
+# Start server
 python manage.py runserver
 ```
 
-Media (local): served from `/media/` mapped to `uploads/`. Static files: `/static/`.
+Local media files: `/uploads/videos/`  
+Local static: `/static/`
 
+---
 
-## Usage
-
-Base URLs (see `videoflix_backend_app/urls.py`):
-- Root: `GET /` → "Welcome to VideoFlix API!"
-- Health: `GET /health/`
-- Admin: `/admin/`
-- RQ dashboard: `/django-rq/`
-- Users API: `/users/`
-  - `POST /users/register/` – register (inactive) and send confirmation email
-  - `GET /users/confirm/?uid=...&token=...` – activate account, redirects to frontend
-  - `POST /users/login/` – returns user profile with token
-  - `POST /users/logout/` – revoke token (auth required)
-  - `POST /users/forgot-password/` – send reset link (generic response)
-  - `POST /users/reset-password/` – set new password
-  - `GET /users/profiles/`, `GET /users/profile/<id>/` – profile listing/details
-- Content API: `/content/`
-  - `GET /content/` – list videos (auth required)
-  - `GET /content/<id>/` – video details
-  - `POST /content/add-favorite/` – toggle favorite `{ video_id }`
-  - `GET /content/video-url/<id>/?quality=360p` – return S3 or local URL for playback
-
-Authentication: include `Authorization: Token <token>` header for protected endpoints.
-
-
-## Docker Deployment
-
-The stack includes: web (Gunicorn), rq_worker, redis, nginx, certbot.
+## Local Development (with Docker)
 
 ```bash
-# 1) Prepare .env (see Configuration section)
-copy NUL .env  # Windows, then edit with your values
-
-# 2) Bring up stack
 docker compose up -d --build
-
-# 3) (Optional) Bootstrap TLS cert once
-# docker compose run --rm certbot_bootstrap
-
-# 4) Check
-# - https://your-domain/.well-known/acme-challenge/ (for cert challenges)
-# - https://your-domain/health (Django)
-# - https://your-domain/ (proxied by nginx)
 ```
 
-Nginx serves static at `/static/` and proxies app to the `web` service on port 8000. Media in production is expected to be on S3 when `USE_S3_MEDIA=true`. If you prefer local media behind Nginx, add the `/media/` alias to `nginx.conf` (already present in sample configs).
+This starts:
+- web (Gunicorn)
+- rq_worker
+- redis
+- nginx (HTTP only unless certificates are added)
 
+Stop:
+```bash
+docker compose down
+```
+
+---
+
+## Production Deployment
+
+The production stack includes:
+- Gunicorn (web)
+- Redis + RQ workers
+- Nginx (reverse proxy + TLS)
+- Certbot (auto renewal)
+- AWS S3 (media)
+- AWS RDS or any PostgreSQL
+
+### Steps
+
+```bash
+# Prepare env
+cp .env.example.prod .env
+# fill secrets
+
+# Pull latest backend image
+docker compose pull web rq_worker
+
+# Restart stack
+docker compose up -d --force-recreate
+```
+
+### First-time HTTPS certificate:
+```bash
+docker compose run --rm certbot_bootstrap
+docker compose restart nginx
+```
+
+---
+
+## Running FFmpeg Tasks & Worker
+
+Worker automatically starts via:
+
+```bash
+docker compose up -d rq_worker
+```
+
+It processes:
+- Video transcoding  
+- Thumbnail generation  
+- Cleanup tasks on delete  
+
+---
+
+## API Endpoints
+
+### Users
+- `POST /users/register/`
+- `POST /users/login/`
+- `POST /users/logout/`
+- `POST /users/forgot-password/`
+- `POST /users/reset-password/`
+- `GET  /users/confirm/?uid=...&token=...`
+
+### Content
+- `GET /content/` — list videos
+- `POST /content/add-favorite/`
+- `GET /content/video-url/<id>/?quality=360p`
+
+### Health
+- `/health/` (app)
+- `/healthz` (nginx)
+
+---
 
 ## Tests
 
-The test suite runs locally without external services — Redis/RQ/cache/S3 are mocked in `conftest.py`.  
-Use SQLite by setting `USE_SQLITE_LOCAL=1`.
+```bash
+DEBUG=1 USE_SQLITE_LOCAL=1 pytest -v
+```
 
-### Run all tests
+Run only users:
+```bash
+pytest users_app/tests -v
+```
 
-**Windows (CMD):**  
-    set DEBUG=1 && set USE_SQLITE_LOCAL=1 && pytest -v
+Run only videos:
+```bash
+pytest content_app/tests -v
+```
 
-**Windows (PowerShell):**  
-    $env:DEBUG=1; $env:USE_SQLITE_LOCAL=1; pytest -v
-
-**macOS / Linux:**  
-    DEBUG=1 USE_SQLITE_LOCAL=1 pytest -v
-
-### Run a subset
-
-**Users app only:**  
-    DEBUG=1 USE_SQLITE_LOCAL=1 pytest users_app/tests -v
-
-**Content app only:**  
-    DEBUG=1 USE_SQLITE_LOCAL=1 pytest content_app/tests -v
-
-> Notes:  
-> - `pytest.ini` is configured to suppress noisy warnings and use the Django settings for tests.  
-> - No Redis server or RQ worker is required for tests; queues and cache are mocked.
-
+---
 
 ## Contributing
+1. Fork  
+2. Create feature branch  
+3. Write clean code + docstrings  
+4. Submit PR
 
-- Fork the repo and create a feature branch
-- Follow existing code style and add docstrings where helpful
-- Open a PR with a clear description of the change and rationale
+---
 
+## Maintainer
+**Velizar Ganchev**  
+Email: ganchev.veli@gmail.com
 
-## License
-
-Specify your license here (MIT recommended). If you add a `LICENSE` file, update this section and badge accordingly.
-
-
-## Contact
-
-- Maintainer: Velizar Ganchev
-- Email: ganchev.veli@gmail.com
-- API Host (prod): https://api.videoflix-velizar-ganchev-backend.com

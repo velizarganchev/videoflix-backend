@@ -34,14 +34,12 @@ def home(request):
 # ----------------------------------------------------------------------
 urlpatterns = [
     path("", home, name="home"),
-    # basic health endpoint
     path("health/", views.health_check, name="health-check"),
-    path("admin/", admin.site.urls),                          # Django admin
+    path("admin/", admin.site.urls),
     path("django-rq/", include("django_rq.urls")
-         ),             # Redis Queue dashboard
+         ),
     path("users/", include("users_app.api.urls")
-         ),             # User management APIs
-    # Video/content APIs
+         ),
     path("content/", include("content_app.api.urls")),
 ]
 

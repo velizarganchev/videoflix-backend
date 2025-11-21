@@ -90,7 +90,8 @@ class RegisterView(CreateAPIView):
                 "Confirm Your Videoflix Account",
                 [user.email],
                 "emails/confirmation_email.html",
-                {"user": user.username, "confirmation_url": confirmation_url},
+                {"user": user.username, "confirmation_url": confirmation_url,
+                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
             )
         else:
             queue = get_queue("default")
@@ -99,7 +100,8 @@ class RegisterView(CreateAPIView):
                 "Confirm Your Videoflix Account",
                 [user.email],
                 "emails/confirmation_email.html",
-                {"user": user.username, "confirmation_url": confirmation_url},
+                {"user": user.username, "confirmation_url": confirmation_url,
+                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
             )
 
     def create(self, request, *args, **kwargs):
@@ -281,7 +283,8 @@ class ForgotPasswordView(GenericAPIView):
                 "Reset Your Password",
                 [user.email],
                 "emails/reset_password_email.html",
-                {"user": user.username, "reset_url": reset_url},
+                {"user": user.username, "reset_url": reset_url,
+                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
             )
         else:
             queue = get_queue("default")
@@ -290,7 +293,8 @@ class ForgotPasswordView(GenericAPIView):
                 "Reset Your Password",
                 [user.email],
                 "emails/reset_password_email.html",
-                {"user": user.username, "reset_url": reset_url},
+                {"user": user.username, "reset_url": reset_url,
+                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
             )
 
         payload = {"message": "If this email exists, a reset link has been sent."}

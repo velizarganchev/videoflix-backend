@@ -1,4 +1,3 @@
-# Explizite Version + Slim-Image
 FROM python:3.12-slim
 
 RUN apt-get update \

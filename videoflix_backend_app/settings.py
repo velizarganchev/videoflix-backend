@@ -167,6 +167,8 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")
 # -----------------------------
 USE_S3_MEDIA = env.bool("USE_S3_MEDIA", default=False)
 
+BACKEND_ORIGIN = env("BACKEND_ORIGIN", default="http://127.0.0.1:8000")
+
 # Backend origin for building absolute URLs (only in DEBUG + local media)
 if DEBUG and not USE_S3_MEDIA:
     BACKEND_ORIGIN = env("BACKEND_ORIGIN", default="http://127.0.0.1:8000")

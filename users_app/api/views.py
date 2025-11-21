@@ -78,7 +78,8 @@ class RegisterView(CreateAPIView):
         user: UserProfile = serializer.save(is_active=False)
         token = str(RefreshToken.for_user(user).access_token)
         uid = int_to_base36(user.id)
-        confirmation_url = f"{settings.FRONTEND_CONFIRM_URL}?uid={uid}&token={token}"
+        backend_confirm_base = f"{settings.BACKEND_ORIGIN.rstrip('/')}/users/confirm/"
+        confirmation_url = f"{backend_confirm_base}?uid={uid}&token={token}"
 
         if settings.DEBUG:
             self._debug_confirm = {

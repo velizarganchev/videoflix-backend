@@ -4,19 +4,9 @@ services:
     pull_policy: always
     command: ["/app/backend.entrypoint.sh", "web"]
     env_file:
-      - .env.prod
+      - .env.prod 
     environment:
-      - ENV_FILE=.env.prod 
-      - USE_S3_MEDIA=${USE_S3_MEDIA}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME}
-      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME}
-      - AWS_S3_QUERYSTRING_AUTH=${AWS_S3_QUERYSTRING_AUTH}
-      - AWS_DEFAULT_REGION=${AWS_S3_REGION_NAME}
-      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
-      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
-      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
+      - ENV_FILE=.env.prod
     networks:
       - app-network
     volumes:
@@ -48,13 +38,6 @@ services:
       - .env.prod
     environment:
       - ENV_FILE=.env.prod
-      - USE_S3_MEDIA=${USE_S3_MEDIA}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME}
-      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME}
-      - AWS_S3_QUERYSTRING_AUTH=${AWS_S3_QUERYSTRING_AUTH}
-      - AWS_DEFAULT_REGION=${AWS_S3_REGION_NAME}
       - OMP_NUM_THREADS=1
       - OPENBLAS_NUM_THREADS=1
       - NUMEXPR_MAX_THREADS=1

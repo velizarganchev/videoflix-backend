@@ -118,7 +118,7 @@ python manage.py runserver
 In another terminal (with the venv activated):
 
 ```bash
-python manage.py rqworker --with-scheduler
+python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
 ```
 
 Now the backend is reachable at **http://127.0.0.1:8000**.

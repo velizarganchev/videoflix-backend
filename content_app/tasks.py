@@ -310,6 +310,10 @@ def generate_thumbnail_task(src_key: str, time_sec: float = 1.0) -> None:
     the corresponding Video.image_file.
 
     Works for both local MEDIA_ROOT and S3-backed storage.
+
+    Also updates Video.processing_state:
+    - "ready"  on success
+    - "failed" on error
     """
     from .models import Video  # lazy import to avoid circular imports
 
@@ -320,7 +324,6 @@ def generate_thumbnail_task(src_key: str, time_sec: float = 1.0) -> None:
         )
         return
 
-    # If a thumbnail already exists, do nothing
     if video.image_file:
         return
 
@@ -331,7 +334,6 @@ def generate_thumbnail_task(src_key: str, time_sec: float = 1.0) -> None:
     cleanup_paths: list[str] = []
 
     try:
-        # Prepare source video file
         if USE_S3:
             bucket = settings.AWS_STORAGE_BUCKET_NAME
             src_path = _s3_download(bucket, src_key)
@@ -344,15 +346,12 @@ def generate_thumbnail_task(src_key: str, time_sec: float = 1.0) -> None:
                 )
                 return
 
-        # Temporary output path for the thumbnail
         fd, tmp_thumb = tempfile.mkstemp(suffix=".jpg")
         os.close(fd)
         cleanup_paths.append(tmp_thumb)
 
-        # Create the thumbnail using ffmpeg
         _ffmpeg_thumbnail(src_path, tmp_thumb, time_sec=time_sec)
 
-        # Store thumbnail in the corresponding backend
         if USE_S3:
             bucket = settings.AWS_STORAGE_BUCKET_NAME
             _s3_upload(bucket, thumb_key, tmp_thumb, _is_public())
@@ -360,12 +359,26 @@ def generate_thumbnail_task(src_key: str, time_sec: float = 1.0) -> None:
             dst_abs = _local_dst_path(thumb_key)
             shutil.move(tmp_thumb, dst_abs)
 
-        # Update Video model to point to the thumbnail
+        # Update Video model:
+        # - point to the thumbnail
+        # - mark processing as READY and clear any previous error
         video.image_file.name = thumb_key
-        video.save(update_fields=["image_file"])
+        video.processing_state = Video.STATUS_READY
+        video.processing_error = ""
+        video.save(update_fields=["image_file",
+                   "processing_state", "processing_error"])
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Thumbnail generation failed for %s", src_key)
+        try:
+            # Mark processing as FAILED and store a short error message
+            video.processing_state = Video.STATUS_FAILED
+            video.processing_error = f"Thumbnail generation failed: {exc}"
+            video.save(update_fields=["processing_state", "processing_error"])
+        except Exception:
+            # Avoid cascading failures
+            logger.exception(
+                "Could not update processing_state for %s", src_key)
     finally:
         # Cleanup temporary files if they still exist
         for p in cleanup_paths:

@@ -13,6 +13,7 @@ import os
 from typing import Dict, Tuple
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.files.storage import FileSystemStorage
 from django.db import models
 
@@ -26,11 +27,13 @@ if getattr(settings, "USE_S3_MEDIA", False):
         media_storage = S3Boto3Storage()
     except Exception:
         media_storage = FileSystemStorage(
-            location=settings.MEDIA_ROOT, base_url=settings.MEDIA_URL
+            location=settings.MEDIA_ROOT,
+            base_url=settings.MEDIA_URL,
         )
 else:
     media_storage = FileSystemStorage(
-        location=settings.MEDIA_ROOT, base_url=settings.MEDIA_URL
+        location=settings.MEDIA_ROOT,
+        base_url=settings.MEDIA_URL,
     )
 
 
@@ -64,20 +67,74 @@ LIST_OF_GENRES = [
 ]
 
 
+def validate_video_file_size(value):
+    """
+    Ensure uploaded video file is not larger than the allowed limit.
+
+    Limit is expressed in megabytes.
+    If exceeded, a ValidationError is raised and the admin form shows
+    a clear error message instead of a generic upload failure.
+    """
+    limit_mb = 200
+    limit_bytes = limit_mb * 1024 * 1024
+
+    if value.size > limit_bytes:
+        raise ValidationError(
+            f"Video file is too large. Maximum allowed size is {limit_mb} MB."
+        )
+
+
 class Video(models.Model):
     VIDEOS_SUBDIR = "videos"
     IMAGES_SUBDIR = "images"
     QUALITIES = ("120p", "360p", "720p", "1080p")
 
+    # -----------------------------
+    # Processing state (for background jobs / frontend UI)
+    # -----------------------------
+    STATUS_PENDING = "pending"        # created, job not yet started
+    STATUS_PROCESSING = "processing"  # worker is transcoding / generating thumbnail
+    STATUS_READY = "ready"            # everything OK, playable
+    STATUS_FAILED = "failed"          # processing failed
+
+    PROCESSING_STATES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_PROCESSING, "Processing"),
+        (STATUS_READY, "Ready"),
+        (STATUS_FAILED, "Failed"),
+    ]
+
     created_at = models.DateTimeField(auto_now_add=True)
     title = models.CharField(max_length=100, unique=True)
     description = models.TextField()
     category = models.CharField(
-        max_length=50, choices=LIST_OF_GENRES, blank=True, null=True
+        max_length=50,
+        choices=LIST_OF_GENRES,
+        blank=True,
+        null=True,
+    )
+
+    # Background processing state for this video.
+    processing_state = models.CharField(
+        max_length=16,
+        choices=PROCESSING_STATES,
+        default=STATUS_PENDING,
+        help_text="Background processing state (transcoding, thumbnail, etc.).",
+    )
+
+    # Last error from processing (if any). Used for debugging/admin.
+    processing_error = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Last processing error message, if any.",
     )
 
     video_file = models.FileField(
-        storage=media_storage, upload_to=f"{VIDEOS_SUBDIR}/", blank=True, null=True
+        storage=media_storage,
+        upload_to=f"{VIDEOS_SUBDIR}/",
+        validators=[validate_video_file_size],
+        blank=True,
+        null=True,
     )
     image_file = models.ImageField(
         storage=media_storage,
@@ -135,8 +192,6 @@ class Video(models.Model):
             return self.converted_files[quality]
 
         return self._build_converted_map_from_name(self.video_file.name).get(quality)
-
-    # ---------- save ----------
 
     def save(self, *args, **kwargs) -> None:
         super().save(*args, **kwargs)

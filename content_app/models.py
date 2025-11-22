@@ -23,7 +23,6 @@ from django.db import models
 if getattr(settings, "USE_S3_MEDIA", False):
     try:
         from storages.backends.s3boto3 import S3Boto3Storage  # type: ignore
-
         media_storage = S3Boto3Storage()
     except Exception:
         media_storage = FileSystemStorage(
@@ -69,11 +68,8 @@ LIST_OF_GENRES = [
 
 def validate_video_file_size(value):
     """
-    Ensure uploaded video file is not larger than the allowed limit.
-
-    Limit is expressed in megabytes.
-    If exceeded, a ValidationError is raised and the admin form shows
-    a clear error message instead of a generic upload failure.
+    Ensure uploaded video file is not larger than the allowed limit (200 MB).
+    If exceeded, raise ValidationError so Django admin shows a clear message.
     """
     limit_mb = 200
     limit_bytes = limit_mb * 1024 * 1024
@@ -89,13 +85,10 @@ class Video(models.Model):
     IMAGES_SUBDIR = "images"
     QUALITIES = ("120p", "360p", "720p", "1080p")
 
-    # -----------------------------
-    # Processing state (for background jobs / frontend UI)
-    # -----------------------------
-    STATUS_PENDING = "pending"        # created, job not yet started
-    STATUS_PROCESSING = "processing"  # worker is transcoding / generating thumbnail
-    STATUS_READY = "ready"            # everything OK, playable
-    STATUS_FAILED = "failed"          # processing failed
+    STATUS_PENDING = "pending"
+    STATUS_PROCESSING = "processing"
+    STATUS_READY = "ready"
+    STATUS_FAILED = "failed"
 
     PROCESSING_STATES = [
         (STATUS_PENDING, "Pending"),
@@ -105,8 +98,10 @@ class Video(models.Model):
     ]
 
     created_at = models.DateTimeField(auto_now_add=True)
+
     title = models.CharField(max_length=100, unique=True)
     description = models.TextField()
+
     category = models.CharField(
         max_length=50,
         choices=LIST_OF_GENRES,
@@ -114,15 +109,13 @@ class Video(models.Model):
         null=True,
     )
 
-    # Background processing state for this video.
     processing_state = models.CharField(
         max_length=16,
         choices=PROCESSING_STATES,
         default=STATUS_PENDING,
-        help_text="Background processing state (transcoding, thumbnail, etc.).",
+        help_text="Background processing state.",
     )
 
-    # Last error from processing (if any). Used for debugging/admin.
     processing_error = models.TextField(
         blank=True,
         null=True,
@@ -133,9 +126,8 @@ class Video(models.Model):
         storage=media_storage,
         upload_to=f"{VIDEOS_SUBDIR}/",
         validators=[validate_video_file_size],
-        blank=True,
-        null=True,
     )
+
     image_file = models.ImageField(
         storage=media_storage,
         upload_to=f"{IMAGES_SUBDIR}/",
@@ -143,6 +135,7 @@ class Video(models.Model):
         null=True,
         editable=False,
     )
+
     converted_files = models.JSONField(
         blank=True,
         null=True,
@@ -168,8 +161,9 @@ class Video(models.Model):
 
     def _build_converted_map_from_name(self, final_name: str | None) -> Dict[str, str]:
         """
-        Build mapping for all QUALITIES based on final storage name
-        (including 'videos/...').
+        Build mapping for all QUALITIES based on final storage name.
+        Result example:
+            {"360p": "videos/myvideo_360p.mp4", ...}
         """
         if not final_name:
             return {}
@@ -179,21 +173,20 @@ class Video(models.Model):
         return {q: f"{base}_{q}{ext}" for q in self.QUALITIES}
 
     def get_key_for_quality(self, quality: str | None = None) -> str | None:
-        """
-        If quality is None -> original video key.
-        Otherwise returns key from converted_files or a fallback.
-        """
+        """Return correct storage key depending on quality."""
         if not self.video_file:
             return None
         if not quality:
             return self.video_file.name
-
         if isinstance(self.converted_files, dict) and quality in self.converted_files:
             return self.converted_files[quality]
-
         return self._build_converted_map_from_name(self.video_file.name).get(quality)
 
     def save(self, *args, **kwargs) -> None:
+        """
+        Ensure that `converted_files` is always in sync with the latest filename.
+        Does not validate or block creation (admin handles that).
+        """
         super().save(*args, **kwargs)
 
         final_name = self.video_file.name if self.video_file else None

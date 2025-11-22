@@ -129,7 +129,7 @@ The backend is designed so that **uploading a video** and **transcoding it** hap
 The `rq_worker` container runs something like:
 
 ```bash
-python manage.py rqworker --with-scheduler
+python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
 ```
 
 For each queued job:
@@ -194,7 +194,7 @@ The entry script (`backend.entrypoint.sh`) typically performs:
 4. `python manage.py collectstatic --noinput`
 5. Starting the main process:
    - For `web`: `gunicorn`
-   - For `rq_worker`: `python manage.py rqworker`
+   - For `rq_worker`: `python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker`
 
 Docker services are defined in `docker-compose.yml` with named services:
 

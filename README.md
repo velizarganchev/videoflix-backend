@@ -101,37 +101,34 @@ A more detailed breakdown is available in **docs/04-architecture.md**.
 
 ---
 
-## 3. Local Development (without Docker)
+## 3. Local Development (Docker-based)
 
-For development you **run Django directly** with `manage.py runserver`. Docker is reserved for the production stack.
+For day-to-day development the backend now runs inside Docker using the dedicated **development compose file**.
+You no longer need to call `manage.py runserver` directly.
+
+The Angular frontend still runs from its own repository (see
+[videoflix-frontend](https://github.com/velizarganchev/videoflix-frontend)) and talks to the backend at
+`http://127.0.0.1:8000` in dev.
 
 ### 3.1 Requirements
 
-- Python 3.12
-- Redis 5+ (local service)
-- PostgreSQL or SQLite
-- FFmpeg installed and available on `PATH`
-- Node 20+ / Angular 18 for the separate frontend (see frontend repo)
+- Docker + Docker Compose plugin
+- FFmpeg on the host (optional, the main video work happens inside the container)
+- Node 20+ / Angular 18 for the separate frontend
 
-### 3.2 Setup
+You do **not** need a local Redis/Postgres installation for the backend; the dev stack provides Redis as a container.
+
+### 3.2 Clone & environment
 
 ```bash
 git clone https://github.com/velizarganchev/videoflix-backend.git
 cd videoflix-backend
 
-python -m venv env
-source env/bin/activate        # Windows: .\env\Scripts\activate
-
-pip install -r requirements.txt
-```
-
-Create a dev `.env` from the example (this project ships with a dev‑oriented template similar to the snippet below):
-
-```bash
+# Create a local .env from the dev template
 cp .env.example.dev .env
 ```
 
-Typical dev values:
+The dev template is preconfigured for:
 
 ```dotenv
 DEBUG=True
@@ -141,36 +138,66 @@ ALLOWED_HOSTS=localhost,127.0.0.1
 CORS_ALLOWED_ORIGINS=http://localhost:4200
 CSRF_TRUSTED_ORIGINS=http://localhost:4200
 
+# Local media on the host, mounted into the container
 USE_S3_MEDIA=False
 MEDIA_URL=/media/
 MEDIA_ROOT=/uploads/videos/
 
-REDIS_LOCATION=redis://localhost:6379/0
+# Redis is provided by the dev stack and reachable via hostname "redis"
+REDIS_LOCATION=redis://redis:6379/0
+
+# In dev, emails are printed as HTML into the backend container logs
 EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 ```
 
-Run migrations and start the dev server:
+### 3.3 Start the dev stack
+
+Use the dedicated development compose file:
 
 ```bash
-python manage.py migrate
-python manage.py createsuperuser  # optional
-python manage.py runserver
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-By default, media files go into `uploads/` in the project root and are served under `/media/` in dev.
+This will start (at minimum):
 
-### 3.3 RQ Worker in Development
+- the Django backend (exposed on `http://127.0.0.1:8000`)
+- a Redis container reachable as `redis`
 
-For local development you start the worker **in a separate terminal**:
+Static files and media uploads are mounted from the host so you can inspect generated videos and thumbnails under
+`uploads/`.
+
+You can now run the Angular frontend from the separate repo and point it to `http://127.0.0.1:8000` as the API origin.
+
+### 3.4 Management commands in dev
+
+To run management commands (migrations, createsuperuser, shell, etc.) inside the running web container, use `exec`.
+Assuming the web service is called `web_dev` in `docker-compose.dev.yml` (adjust if you renamed it):
 
 ```bash
-python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
+# Run migrations
+docker compose -f docker-compose.dev.yml exec web_dev python manage.py migrate
+
+# Create an admin user
+docker compose -f docker-compose.dev.yml exec web_dev python manage.py createsuperuser
+
+# Open a Django shell
+docker compose -f docker-compose.dev.yml exec web_dev python manage.py shell
 ```
 
-This uses the same `SimpleWorker` class that production uses inside the Docker container. It is optimized to handle long‑running
-FFmpeg processes without being killed by timeouts.
+### 3.5 Background jobs & Django‑RQ
 
-You can also monitor jobs via the Django‑RQ dashboard:
+For development you can either:
+
+1. Start an RQ worker from inside the dev container, or  
+2. Start it from your host, pointing it at the `redis` host.
+
+A simple example using the dev container:
+
+```bash
+docker compose -f docker-compose.dev.yml exec web_dev   python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
+```
+
+The Django‑RQ dashboard is available in dev at:
 
 - URL: `http://127.0.0.1:8000/django-rq/`
 - Requires staff/superuser login.

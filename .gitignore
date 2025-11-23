@@ -109,6 +109,8 @@ venv.bak/
 
 # ✅ Allow the example env file to be tracked
 !.env.example
+!.env.example.dev
+!.env.example.prod
 
 # mkdocs documentation 
 /site 

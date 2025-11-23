@@ -313,6 +313,7 @@ class ResetPasswordView(GenericAPIView):
     Security:
     - Validates AccessToken.
     - Ensures token subject matches the uid.
+    - Sends a confirmation email after successful password change.
     """
     permission_classes = [AllowAny]
 
@@ -326,10 +327,11 @@ class ResetPasswordView(GenericAPIView):
 
         try:
             user_id = base36_to_int(uid)
-
             at = AccessToken(token)
             if int(at.get("user_id")) != user_id:
-                return Response({"error": "Token does not match user."}, status=400)
+                return Response(
+                    {"error": "Token does not match user."}, status=400
+                )
 
             user = UserProfile.objects.get(id=user_id)
         except TokenError:
@@ -339,4 +341,33 @@ class ResetPasswordView(GenericAPIView):
 
         user.set_password(new_password)
         user.save(update_fields=["password"])
-        return Response({"message": "Password has been reset successfully."}, status=200)
+
+        try:
+            subject = "Your Videoflix password was changed"
+            template_name = "emails/password_reset_success.html"
+            context = {
+                "user": user.username,
+                "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png",
+            }
+            if settings.DEBUG:
+                send_email_task(
+                    subject,
+                    [user.email],
+                    template_name,
+                    context,
+                )
+            else:
+                queue = get_queue("default")
+                queue.enqueue(
+                    send_email_task,
+                    subject,
+                    [user.email],
+                    template_name,
+                    context,
+                )
+        except Exception:
+            pass
+
+        return Response(
+            {"message": "Password has been reset successfully."}, status=200
+        )

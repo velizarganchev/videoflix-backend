@@ -1,221 +1,112 @@
-# Local Development Setup
+# 01 – Local Development Setup
 
-This document explains how to run the Videoflix backend **locally** for development, both:
-
-1. Directly with `manage.py runserver` (recommended for day‑to‑day coding)
-2. Via `docker compose` (to simulate the production stack)
+This guide explains how to run **Videoflix Backend** locally for development, together with the Angular frontend.
 
 ---
 
-## 1. Direct Django + Redis + FFmpeg (no Docker)
+## 1. Requirements
 
-### 1.1 Requirements
+- Python 3.12
+- Node 20+ and Angular CLI 18 (for the frontend)
+- Redis 5+ running locally
+- PostgreSQL or SQLite
+- FFmpeg installed and on your `PATH`
 
-- Python **3.12**
-- PostgreSQL or SQLite (SQLite is fine for dev)
-- Redis **5+**
-- FFmpeg installed and available in your `PATH`
-- Git
+---
 
-### 1.2 Clone & create virtualenv
+## 2. Clone and Install
 
 ```bash
 git clone https://github.com/velizarganchev/videoflix-backend.git
 cd videoflix-backend
 
 python -m venv env
-source env/bin/activate        # Linux/macOS
-# .\env\Scripts\activate    # Windows PowerShell / CMD
-```
+source env/bin/activate        # Windows: .\env\Scripts\activate
 
-### 1.3 Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 1.4 Configure `.env` for DEV
+---
 
-Copy the example and adjust only what you need:
+## 3. Environment (.env)
+
+For development you **do not** use Docker. Instead, configure Django via `.env`:
 
 ```bash
 cp .env.example.dev .env
 ```
 
-Key settings for dev (excerpt):
+The dev template is tuned for:
 
-```env
-# CORE / SECURITY (DEV)
-DEBUG=True
-SECRET_KEY=dev-secret-key-change-me
+- `DEBUG=True`
+- `BACKEND_ORIGIN=http://127.0.0.1:8000`
+- `ALLOWED_HOSTS=localhost,127.0.0.1`
+- `CORS_ALLOWED_ORIGINS=http://localhost:4200`
+- `USE_S3_MEDIA=False` (local uploads under `uploads/`)
+- `REDIS_LOCATION=redis://localhost:6379/0`
+- Console email backend
 
-BACKEND_ORIGIN=http://127.0.0.1:8000
-ALLOWED_HOSTS=localhost,127.0.0.1
+Adjust DB settings if you want to use Postgres instead of SQLite.
 
-# FRONTEND (DEV)
-CORS_ALLOWED_ORIGINS=http://localhost:4200
-CSRF_TRUSTED_ORIGINS=http://localhost:4200
+---
 
-FRONTEND_URL=http://localhost:4200/login
-FRONTEND_CONFIRM_URL=http://localhost:4200/confirm
-RESET_PASSWORD_URL=http://localhost:4200/reset-password
-
-# COOKIES (DEV)
-JWT_COOKIE_SAMESITE=None
-JWT_COOKIE_SECURE=False
-CSRF_COOKIE_SECURE=False
-SESSION_COOKIE_SECURE=False
-
-# REDIS / RQ (DEV)
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
-REDIS_LOCATION=redis://localhost:6379/0
-
-# EMAIL (DEV)
-EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
-DEFAULT_FROM_EMAIL=dev@example.com
-
-# MEDIA (DEV: LOCAL FILES)
-USE_S3_MEDIA=False
-MEDIA_URL=/media/
-MEDIA_ROOT=/uploads/videos/
-```
-
-> In dev, media is stored **locally**, and password reset / confirmation emails are printed to the console.
-
-### 1.5 Database migrations
+## 4. Run Migrations and Server
 
 ```bash
 python manage.py migrate
-```
-
-### 1.6 Create a superuser (optional but recommended)
-
-```bash
-python manage.py createsuperuser
-```
-
-### 1.7 Start services
-
-#### 1.7.1 Redis
-
-- Either run Redis as a service
-- Or start it manually in a terminal:
-
-```bash
-redis-server
-```
-
-#### 1.7.2 Django dev server
-
-```bash
+python manage.py createsuperuser  # optional, for Django admin
 python manage.py runserver
 ```
 
-#### 1.7.3 RQ worker
+The API will be available at http://127.0.0.1:8000.
 
-In another terminal (with the venv activated):
+Django admin lives at http://127.0.0.1:8000/admin/. Use it to upload videos.
+
+---
+
+## 5. Start Redis and RQ Worker
+
+Make sure Redis is running locally (e.g. on Windows via WSL, or as a service). Then start the worker in a second terminal:
 
 ```bash
-python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker --with-scheduler
+source env/bin/activate        # if not already active
+python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker
 ```
 
-Now the backend is reachable at **http://127.0.0.1:8000**.
+This worker processes:
 
-### 1.8 Connect the Angular frontend
+- Video transcoding (FFmpeg)
+- Thumbnail generation
+- Background email sending in production‑like setups
 
-In the Angular frontend repo (separate project):
+Monitor queues via Django‑RQ:
 
-- Ensure `environment.ts` has `baseApiUrl` set to `http://127.0.0.1:8000`
-- Run:
+- http://127.0.0.1:8000/django-rq/
+
+---
+
+## 6. Frontend (Angular)
+
+Clone the frontend separately:
 
 ```bash
+git clone https://github.com/velizarganchev/videoflix-frontend.git
+cd videoflix-frontend
+npm install
 ng serve
 ```
 
-Your dev stack now is:
+By default the dev frontend runs on http://localhost:4200 and talks to the backend at http://127.0.0.1:8000.
 
-- Frontend: `http://localhost:4200`
-- Backend API: `http://127.0.0.1:8000`
-
----
-
-## 2. Local Docker Stack (HTTP only)
-
-You can also start the backend using **docker compose**, which runs:
-
-- Django + Gunicorn
-- Redis
-- RQ worker
-- Nginx (HTTP only, port 80)
-
-### 2.1 Requirements
-
-- Docker
-- docker‑compose / Docker Compose plugin
-
-### 2.2 Create `.env`
-
-You can reuse `.env.example.dev`:
-
-```bash
-cp .env.example.dev .env
-```
-
-> When running under Docker, `REDIS_HOST` should be `redis` and DB settings should match the `docker-compose.yml` file if you enable Postgres in containers.  
-> For simple testing you can still point to a remote or local Postgres instance.
-
-### 2.3 Start the stack
-
-```bash
-docker compose up -d --build
-```
-
-This will:
-
-- build the web image
-- run migrations and collectstatic on container start
-- start the `web`, `redis`, `rq_worker` and `nginx` services
-
-By default:
-
-- Nginx is exposed on **port 80**
-- API should be reachable at: `http://localhost`
-
-### 2.4 Stop the stack
-
-```bash
-docker compose down
-```
-
-### 2.5 Logs
-
-View logs for web:
-
-```bash
-docker compose logs web -f
-```
-
-View logs for worker:
-
-```bash
-docker compose logs rq_worker -f
-```
+Make sure the dev `.env` in the backend and the Angular environment files use matching URLs and CORS origins.
 
 ---
 
-## 3. Switching Between Local Files and S3 (for testing)
+## 7. Typical Dev Flow
 
-Even in local dev you can test the S3 mode by setting in `.env`:
-
-```env
-USE_S3_MEDIA=True
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_STORAGE_BUCKET_NAME=...
-AWS_S3_REGION_NAME=eu-central-1
-AWS_S3_QUERYSTRING_AUTH=True   # presigned URLs mode
-```
-
-If you keep `USE_S3_MEDIA=False`, the project stores everything under `MEDIA_ROOT` (`/uploads/videos/`), which is usually easier during development.
+- Run Redis
+- Start Django (`runserver`)
+- Start RQ worker (`rqworker ... SimpleWorker`)
+- Start Angular (`ng serve`)
+- Upload a video via Django admin
+- Watch transcoding jobs and thumbnails appear in `/django-rq/`

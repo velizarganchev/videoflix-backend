@@ -1,271 +1,97 @@
-# Deployment & Operations Guide
+# 05 – Deployment Guide (Docker)
 
-This document focuses on **day‑to‑day operations** once the Videoflix backend is already set up in development or production.
-
-It covers:
-
-- common Docker commands
-- updating code and images
-- checking logs
-- managing migrations
-- troubleshooting
+This guide focuses on everyday Docker commands and a typical workflow for updating Videoflix Backend in production.
 
 ---
 
-## 1. Common Docker Commands
+## 1. First Deployment
 
-All commands assume you are in the project root, next to `docker-compose.yml`.
+1. Provision an EC2 instance and install Docker + docker-compose-plugin.  
+2. Clone or copy the repository to `/srv/videoflix-backend` (or similar).  
+3. Create `.env` from `.env.example.prod` and fill in all required values.  
+4. Run:
 
-### 1.1 Start the stack
+   ```bash
+   docker compose pull web rq_worker redis nginx certbot_bootstrap
+   docker compose up -d --build
+   ```
 
-```bash
-docker compose up -d
-```
+5. Obtain certificates (once):
 
-or with a rebuild:
-
-```bash
-docker compose up -d --build
-```
-
-### 1.2 Stop the stack
-
-```bash
-docker compose down
-```
-
-### 1.3 Restart specific service
-
-```bash
-docker compose restart web
-docker compose restart rq_worker
-docker compose restart nginx
-```
-
-### 1.4 View logs
-
-```bash
-docker compose logs web -f
-docker compose logs rq_worker -f
-docker compose logs nginx -f
-docker compose logs redis -f
-```
-
-Use `Ctrl + C` to exit the log tail.
+   ```bash
+   docker compose run --rm certbot_bootstrap
+   docker compose restart nginx
+   ```
 
 ---
 
 ## 2. Updating the Application
 
-### 2.1 If you build images locally
+### 2.1 Build or Pull New Image
 
-1. Pull latest code:
+Either build on the server:
 
-   ```bash
-   git pull origin main
-   ```
+```bash
+docker compose build web rq_worker
+```
 
-2. Rebuild and restart services:
+or push new images from CI to a registry (GCR/ECR/Docker Hub) and then pull them on the server:
 
-   ```bash
-   docker compose up -d --build
-   ```
+```bash
+docker compose pull web rq_worker
+```
 
-Migrations and static collection will run automatically on `web` start (via entrypoint).
+### 2.2 Apply Migrations and Restart
 
-### 2.2 If you use Docker Hub or another registry
+A simple approach is:
 
-1. Pull latest images:
+```bash
+docker compose run --rm web python manage.py migrate
+docker compose up -d --force-recreate web rq_worker
+```
 
-   ```bash
-   docker compose pull web rq_worker
-   ```
-
-2. Recreate containers:
-
-   ```bash
-   docker compose up -d --force-recreate
-   ```
-
-This avoids rebuilding on the server.
+This ensures the DB schema is up to date and both the app and worker use the new code.
 
 ---
 
-## 3. Migrations & Database Tasks
-
-Normally, migrations are handled automatically by the entrypoint when `web` starts.
-
-If you ever need to run them manually in the container:
+## 3. Logs and Debugging
 
 ```bash
-docker compose exec web python manage.py migrate
+docker compose logs -f web
+docker compose logs -f rq_worker
+docker compose logs -f nginx
 ```
 
-Or to create a new migration from changed models:
+For FFmpeg or RQ issues, check:
 
-```bash
-docker compose exec web python manage.py makemigrations
-```
-
-> In production, it is usually better to create migrations locally, commit them, and then deploy, instead of generating them directly on the server.
+- `rq_worker` logs  
+- Django‑RQ dashboard at `/django-rq/` for failed jobs
 
 ---
 
-## 4. Superuser Management
+## 4. Maintenance Tasks
 
-To create a superuser manually inside the `web` container:
-
-```bash
-docker compose exec web python manage.py createsuperuser
-```
-
-You can also set environment variables:
-
-```env
-DJANGO_SUPERUSER_USERNAME=admin
-DJANGO_SUPERUSER_PASSWORD=admin
-DJANGO_SUPERUSER_EMAIL=admin@example.com
-```
-
-and rely on the entrypoint to create the superuser automatically on first run (if implemented that way). Remember to remove or change these values once the initial setup is done.
-
----
-
-## 5. RQ Worker & FFmpeg Jobs
-
-### 5.1 Checking worker status
-
-Use logs:
-
-```bash
-docker compose logs rq_worker -f
-```
-
-You should see output such as:
-
-- Worker started
-- Jobs being enqueued / dequeued
-- Any exceptions during FFmpeg runs
-
-### 5.2 Re‑starting workers
-
-If a worker crashes or you change code related to tasks:
-
-```bash
-docker compose restart rq_worker
-```
-
-Workers will reconnect to Redis and start processing jobs again.
-
----
-
-## 6. SSL & Certbot
-
-If you change domains or need to renew certificates manually:
-
-### 6.1 Run certbot bootstrap again
-
-```bash
-docker compose run --rm certbot_bootstrap
-docker compose restart nginx
-```
-
-Certificates are stored in a persistent volume, so they remain across restarts.
-
-For automated renewal, the `certbot` container (if present in the stack) can be scheduled via cron or similar mechanisms.
-
----
-
-## 7. Health Checks
-
-Use the health endpoints to verify that the service is alive:
-
-- Nginx:  
-  `GET https://api.your-domain.com/healthz`
-
-- Django:  
-  `GET https://api.your-domain.com/health/`
-
-These can be wired to:
-
-- AWS ALB / NLB health checks
-- External uptime monitoring services
-- Simple scripts or dashboards
-
----
-
-## 8. Troubleshooting Checklist
-
-### 8.1 “502 Bad Gateway” / Nginx error
-
-- Check `web` logs:
-  ```bash
-  docker compose logs web -f
-  ```
-- Check that Gunicorn is running and listening on the expected port (usually 8000 inside the container).
-- Ensure migrations have run successfully; sometimes startup fails due to DB errors.
-
-### 8.2 Video processing never finishes
-
-- Check `rq_worker` logs for tracebacks.
-- Confirm FFmpeg is installed and in `PATH` inside the container.
-- Verify S3 credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, bucket name).
-- Check that `USE_S3_MEDIA` matches your expectation (True/False).
-
-### 8.3 Database connection issues
-
-- Test connectivity from inside the `web` container:
+- **Create superuser (production):**
 
   ```bash
-  docker compose exec web ping your-rds-endpoint.amazonaws.com
+  docker compose run --rm web python manage.py createsuperuser
   ```
 
-- Ensure RDS security group allows connections from the EC2 security group on port 5432.
-- Verify `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` in `.env`.
-- If SSL is required, confirm that `DB_SSL_ROOTCERT` points to the mounted CA bundle.
+- **Check health endpoints:**
 
-### 8.4 CORS / CSRF problems
+  - App health: `https://api.your-domain.com/health/`  
+  - Nginx health: `https://api.your-domain.com/healthz`
 
-- Double‑check:
-
-  ```env
-  ALLOWED_HOSTS=...
-  CORS_ALLOWED_ORIGINS=...
-  CSRF_TRUSTED_ORIGINS=...
-  BACKEND_ORIGIN=...
-  ```
-
-- All must reflect the **real** HTTPS URLs of your frontend and backend.
-
-### 8.5 Cookies not stored
-
-- Ensure you use `withCredentials: true` in frontend HTTP calls.
-- In dev, `JWT_COOKIE_SECURE=False` if you are not on HTTPS.
-- In production, always use HTTPS (Secure cookies).
+- **Backup DB:** use RDS snapshots or `pg_dump` against the RDS endpoint.
 
 ---
 
-## 9. Backups & Disaster Recovery
+## 5. Zero‑Downtime Considerations (Optional)
 
-- **Database (RDS)**  
-  - Enable automated backups.
-  - Optionally create manual snapshots before major changes.
+For more advanced setups you can:
 
-- **Media (S3)**  
-  - Enable versioning and, optionally, replication or lifecycle rules.
-  - Consider a separate backup bucket or cross‑region replication for critical data.
+- Use rolling updates with two EC2 instances behind a load balancer.  
+- Run multiple `web` containers (scale out Gunicorn workers).  
+- Move Redis into a managed service (ElastiCache) for higher availability.
 
-- **Configuration**  
-  - Keep `docker-compose.yml`, `nginx.conf`, and `.env` copies in a secure password manager or vault.
-  - Use Git for code and configuration templates.
-
----
-
-## 10. Performance Tips
-
-- Use a compute‑optimized instance (e.g. `c6a.large`) if FFmpeg is slow.
-- Increase `worker_processes` and `worker_connections` in Nginx for high concurrency.
-- Adjust Gunicorn workers based on CPU count (e.g. `workers = 2 * cores + 1`).
-- Offload static files to a CDN if needed (S3 + CloudFront).
-
-With these practices, you should be able to operate the Videoflix backend reliably in both testing and production environments.
+These optimizations are not required for the course project but are natural next steps for a production SaaS.

@@ -1,6 +1,7 @@
-# Architecture & Data Flow
+# 04 – Architecture & Data Flow
 
-This document explains how the Videoflix backend is structured internally and how requests and background jobs flow through the system.
+This document complements the short overview in the main `README.md` and goes deeper into how Videoflix Backend is put
+together and how requests flow through the system.
 
 ---
 
@@ -8,237 +9,104 @@ This document explains how the Videoflix backend is structured internally and ho
 
 ```text
 +-------------------------+
-|       Angular App       |
+|     Angular Frontend    |
 |  (videoflix-frontend)   |
 +------------+------------+
              |
              | HTTPS (JWT cookies, JSON)
              v
 +------------+------------+
-|         Nginx           |
-|  TLS termination,       |
-|  static, reverse proxy  |
+|     Nginx Reverse Proxy |
 +------------+------------+
              |
-             | HTTP (Gunicorn)
+             | proxy_pass to Gunicorn
              v
-+------------+------------+
-|     Django + DRF        |
-|   (Gunicorn workers)    |
-+------------+------------+
-    |                |
-    | ORM            | RQ enqueue
-    v                v
-+--------+     +-----------+
-|  RDS   |     |  Redis    |
-|  Postg.|     |  Queue    |
-+--------+     +-----+-----+
-                     |
-                     | Jobs
-                     v
-             +---------------+
-             |  RQ Worker    |
-             |  (FFmpeg, S3) |
-             +-------+-------+
-                     |
-                     | upload / download
-                     v
-                +---------+
-                |   S3    |
-                +---------+
++-------------------------+
+|   Django + DRF Backend  |
+|  (videoflix-backend)    |
++------+------+-----------+
+       |      |
+       |      | enqueue jobs
+       |      v
+       |  +---+------------------+
+       |  |  RQ Worker (FFmpeg)  |
+       |  | SimpleWorker class   |
+       |  +----------+-----------+
+       |             |
+       |             | reads/writes
+       v             v
++-------------+   +-------------------+
+|  Postgres   |   |  Media Storage    |
+| (RDS / dev) |   |  S3 or local FS   |
++-------------+   +-------------------+
 ```
 
----
-
-## 2. Django Apps
-
-### 2.1 `users_app`
-
-Responsibilities:
-
-- Custom user model / profile
-- Registration and email confirmation
-- Login/logout
-- Password reset (email link → token)
-- Favorite videos
-- JWT cookie integration with SimpleJWT:
-  - Access token: short‑lived (e.g. 5 minutes)
-  - Refresh token: longer‑lived (e.g. 1 hour or 7 days for “remember me”)
-- Helper functions to set/clear HttpOnly cookies on responses
-
-### 2.2 `content_app`
-
-Responsibilities:
-
-- `Video` model and related logic
-- Fields:
-  - `title`, `description`, `category`
-  - `video_file` (original)
-  - `image_file` (thumbnail)
-  - `converted_files` (JSON map of renditions by quality)
-  - `processing_state` (`pending`, `processing`, `ready`, `error`)
-  - `processing_error` (text, optional)
-- API endpoints:
-  - List videos
-  - Toggle favorites
-  - Generate signed playback URL (for requested quality)
-- Tasks and signals for FFmpeg jobs and cleanup
-
-### 2.3 `middleware`
-
-- Contains range request / streaming helpers so that clients can seek within video content (especially important for large files and video players).
+- The frontend communicates only with Django via JSON APIs and HttpOnly cookies.  
+- Nginx terminates TLS and proxies requests to Gunicorn (WSGI).  
+- Heavy video work is delegated to a background worker using Redis + RQ.  
+- Final media files live either on S3 (production) or under `uploads/` (dev).
 
 ---
 
-## 3. Video Upload & Processing Flow
+## 2. Request / Response Flow
 
-The backend is designed so that **uploading a video** and **transcoding it** happen asynchronously.
+1. Browser sends a request to `https://api.your-domain.com/...` with cookies.  
+2. Nginx forwards the request to the `web` container (Gunicorn).  
+3. Django + DRF handle routing, authentication, permissions, and serialization.  
+4. Responses go back through Nginx to the client.
 
-### 3.1 Upload in Django Admin (or via API)
-
-1. Admin uploads a file to the `Video.video_file` field.
-2. Django saves the `Video` instance with:
-   - `processing_state = "pending"` initially.
-3. After `save()`, a **signal** (`post_save`) is triggered.
-
-### 3.2 Signals → RQ Jobs
-
-`content_app.signals` connects `Video` to Django signals:
-
-- `post_save(Video)`
-  - If a new video was created:
-    - Enqueues **four FFmpeg jobs**:
-      - `convert_to_120p`
-      - `convert_to_360p`
-      - `convert_to_720p`
-      - `convert_to_1080p`
-    - Enqueues a **thumbnail** job: `generate_thumbnail_task`
-  - These jobs are put into the `default` RQ queue.
-
-- `pre_save(Video)`  
-  - If the `video_file` or `image_file` changes, it enqueues cleanup jobs to delete old originals/renditions/thumbnails.
-
-- `post_delete(Video)`  
-  - When a video is deleted, enqueues jobs to remove:
-    - the original file
-    - all renditions
-    - the thumbnail
-
-### 3.3 Worker Execution
-
-The `rq_worker` container runs something like:
-
-```bash
-python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker --with-scheduler
-```
-
-For each queued job:
-
-1. It downloads or locates the source file:
-   - If `USE_S3_MEDIA=True` → download from S3 to a temp file.
-   - Else → operate on a local path under `MEDIA_ROOT`.
-2. It runs `ffmpeg` to produce a rendition at a specific height (e.g. 360p).
-3. It writes the output:
-   - Either back to S3 (`_s3_upload`)
-   - Or to local storage under `MEDIA_ROOT`
-4. It updates the `Video.converted_files` JSON mapping and, when all renditions are present, sets `processing_state = "ready"`.
-5. If any error occurs, it sets `processing_state = "error"` and logs `processing_error` with details.
-
-### 3.4 Frontend View
-
-- The Angular frontend fetches videos via `/content/`.
-- Each video item includes its `processing_state`.
-- If `processing_state !== "ready"`:
-  - The frontend can display a **spinner** or “processing” placeholder.
-  - It can disable clicking to prevent playback attempts of incomplete videos.
-- Once the worker finishes and the state becomes `"ready"`:
-  - The thumbnail is available (`image_file`)
-  - Clicking the card requests a signed playback URL from `/content/video-url/<id>/`.
+Because JWTs are stored in HttpOnly cookies, JavaScript cannot read or modify them. Authentication is handled entirely on
+the server side (via SimpleJWT cookie integration).
 
 ---
 
-## 4. Signed Playback URLs (S3)
+## 3. Video Upload & Processing
 
-When `USE_S3_MEDIA=True`:
+1. Admin uploads a video file via Django admin.  
+2. The `Video` model is saved and a post‑save signal enqueues background jobs:
+   - One job per target resolution (120p / 360p / 720p / 1080p)
+   - One job for thumbnail generation
+3. The `rq_worker` container (or the local worker in dev) picks up these jobs:
+   - Downloads the source from S3 (or reads from local disk)
+   - Runs FFmpeg to create renditions
+   - Uploads renditions back to S3 / local media
+   - Updates the `converted_files` JSON field on the `Video` row
+   - Generates and stores a thumbnail (`image_file`)
+4. The frontend periodically receives updated `processing_state` values from the `/content/` endpoint and can show spinners,
+   disabled cards, or errors based on that state.
 
-1. The `Video` model stores only **keys** (paths) of objects in S3.
-2. To actually stream a video, the frontend calls the backend:
+Cleanup paths (pre‑save and post‑delete signals) ensure that old renditions and thumbnails are removed when a video is
+replaced or deleted.
+
+---
+
+## 4. Streaming Flow
+
+1. Frontend lists videos via `GET /content/` and shows thumbnails.  
+2. When the user starts playback, the player requests:
 
    ```http
    GET /content/video-url/<id>/?quality=720p
    ```
 
-3. The backend:
-   - Looks up the `Video` and the appropriate key:
-     - Original or one of the renditions from `converted_files`.
-   - Uses `boto3` to generate a **presigned URL** with a short expiry.
-   - Returns JSON: `{ "url": "<presigned-url>" }`.
-4. The player loads this URL directly from S3.
+3. Backend resolves the correct file key via `Video.get_key_for_quality()` and returns:
 
-If `AWS_S3_QUERYSTRING_AUTH=False` is configured and bucket policy allows public `GET`, the backend may also return a **plain public URL** instead of a presigned one.
+   - A **presigned S3 URL** when `USE_S3_MEDIA=True` and `AWS_S3_QUERYSTRING_AUTH=True`.  
+   - A **public S3 URL** when querystring auth is disabled and the bucket is public.  
+   - A **local `/media/...` URL** when running in dev with local storage.
 
----
-
-## 5. Docker & Entry Point
-
-The `Dockerfile` builds a single image that is used for both:
-
-- `web` (Gunicorn + Django)
-- `rq_worker` (RQ worker command)
-
-The entry script (`backend.entrypoint.sh`) typically performs:
-
-1. Django system checks
-2. `python manage.py migrate`
-3. Optional superuser creation (if env variables set)
-4. `python manage.py collectstatic --noinput`
-5. Starting the main process:
-   - For `web`: `gunicorn`
-   - For `rq_worker`: `python manage.py rqworker --worker-class videoflix_backend_app.simple_worker.SimpleWorker`
-
-Docker services are defined in `docker-compose.yml` with named services:
-
-- `web`
-- `rq_worker`
-- `redis`
-- `nginx`
-- `certbot` / `certbot_bootstrap`
-
-Nginx forwards traffic to `web:8000` and exposes `80`/`443` publicly.
+4. The video player streams directly from S3 or local storage; Django is not in the hot path for bytes transfer.
 
 ---
 
-## 6. Health Endpoints
+## 5. Background Jobs & Monitoring
 
-- `/health/`  
-  Basic application health check (Django).
+- All jobs are queued into Redis (queue name: usually `"default"`).  
+- The custom `SimpleWorker` is used so long FFmpeg runs are handled reliably.  
+- Django‑RQ provides a web dashboard at `/django-rq/` where you can:
+  - Inspect queues and workers
+  - See job history and failures
+  - Requeue or delete failed jobs
 
-- `/healthz`  
-  Nginx / container‑level health check, often used by load balancers or uptime monitors.
+In production this URL is protected by Django's admin authentication and should only be accessible to staff.
 
----
-
-## 7. Summary of Data Lifecycle
-
-1. **User signs up**  
-   - Backend stores user in `users_app_userprofile`.
-   - Sends email with confirm link → frontend.
-
-2. **Admin uploads a video**  
-   - `Video` model stores original file.
-   - Signals enqueue conversions and thumbnail generation.
-   - `processing_state` moves from `pending` → `processing` → `ready` (or `error`).
-
-3. **Frontend lists videos**  
-   - Calls `/content/`.
-   - Shows spinner / disabled state if `processing_state` is not `ready`.
-
-4. **User starts playback**  
-   - Frontend requests `/content/video-url/<id>/?quality=...`.
-   - Backend returns a presigned S3 URL.
-   - Player streams directly from S3 (or local storage, in dev).
-
-5. **Cleanup**  
-   - When a `Video` is updated or deleted, RQ removes old files/renditions/thumbnails to avoid storage leaks.
-
-This architecture keeps the web request/response path responsive while heavy video processing is offloaded to worker processes.

@@ -1,0 +1,31 @@
+services:
+  web:
+    build: .
+    container_name: videoflix_web_dev
+    command: ["sh", "/app/backend.dev.entrypoint.sh", "web"]
+    env_file:
+      - .env.dev
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: videoflix_redis_dev
+    ports:
+      - "6379:6379"
+
+  rq_worker:
+    build: .
+    container_name: videoflix_rq_worker_dev
+    command: ["sh", "/app/backend.dev.entrypoint.sh", "worker"]
+    env_file:
+      - .env.dev
+    depends_on:
+      - redis
+    restart: always
+    volumes:
+      - .:/app

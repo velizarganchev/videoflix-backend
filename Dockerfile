@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=appuser:appuser . .
-RUN chmod +x /app/backend.entrypoint.sh
+RUN chmod +x /app/backend.entrypoint.sh /app/backend.dev.entrypoint.sh
 
 RUN mkdir -p /app/staticfiles /app/uploads \
     && chown -R appuser:appuser /app

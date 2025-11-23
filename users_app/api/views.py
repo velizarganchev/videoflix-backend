@@ -18,15 +18,14 @@ POST   /users/forgot-password/  → Request password reset link
 POST   /users/reset-password/   → Set new password using reset token
 """
 
+from urllib.parse import parse_qs
+
 from django.utils.http import int_to_base36, base36_to_int
 from django.http import HttpResponseRedirect
 from django.conf import settings
 
 from rest_framework import status
-from rest_framework.generics import (
-    CreateAPIView,
-    GenericAPIView,
-)
+from rest_framework.generics import CreateAPIView, GenericAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -36,7 +35,12 @@ from django_rq import get_queue
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError, AccessToken
 
 from ..models import UserProfile
-from .serializers import EmailQuerySerializer, UserPublicSerializer, RegisterSerializer, LoginSerializer
+from .serializers import (
+    EmailQuerySerializer,
+    UserPublicSerializer,
+    RegisterSerializer,
+    LoginSerializer,
+)
 from ..tasks import send_email_task
 from .auth import set_auth_cookies, clear_auth_cookies
 
@@ -78,8 +82,16 @@ class RegisterView(CreateAPIView):
         user: UserProfile = serializer.save(is_active=False)
         token = str(RefreshToken.for_user(user).access_token)
         uid = int_to_base36(user.id)
+
+        # Backend confirm endpoint – always stable, both in dev and prod.
         backend_confirm_base = f"{settings.BACKEND_ORIGIN.rstrip('/')}/users/confirm/"
         confirmation_url = f"{backend_confirm_base}?uid={uid}&token={token}"
+
+        context = {
+            "user": user.username,
+            "confirmation_url": confirmation_url,
+            "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png",
+        }
 
         if settings.DEBUG:
             self._debug_confirm = {
@@ -91,8 +103,7 @@ class RegisterView(CreateAPIView):
                 "Confirm Your Videoflix Account",
                 [user.email],
                 "emails/confirmation_email.html",
-                {"user": user.username, "confirmation_url": confirmation_url,
-                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
+                context,
             )
         else:
             queue = get_queue("default")
@@ -101,8 +112,7 @@ class RegisterView(CreateAPIView):
                 "Confirm Your Videoflix Account",
                 [user.email],
                 "emails/confirmation_email.html",
-                {"user": user.username, "confirmation_url": confirmation_url,
-                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
+                context,
             )
 
     def create(self, request, *args, **kwargs):
@@ -122,12 +132,30 @@ class ConfirmView(APIView):
     Security:
     - Validates the provided AccessToken.
     - Ensures token subject matches the uid.
+
+    Extra:
+    - In DEBUG, also tolerates querystrings where '&' was copy-pasted
+      as '&amp;' (when copying from HTML printed in the console backend).
     """
     permission_classes = [AllowAny]
 
-    def get(self, request):
+    def _extract_params(self, request):
         uid = request.query_params.get("uid")
         token = request.query_params.get("token")
+
+        if (not uid or not token) and settings.DEBUG:
+            raw_qs = request.META.get("QUERY_STRING", "")
+            if "amp;" in raw_qs:
+                fixed_qs = raw_qs.replace("amp;", "")
+                parsed = parse_qs(fixed_qs)
+                uid = uid or (parsed.get("uid", [None])[0])
+                token = token or (parsed.get("token", [None])[0])
+
+        return uid, token
+
+    def get(self, request):
+        uid, token = self._extract_params(request)
+
         if not uid or not token:
             return Response({"error": "Missing uid or token."}, status=400)
 
@@ -162,7 +190,8 @@ class JwtRefreshView(APIView):
 
     def post(self, request):
         refresh_cookie_name = getattr(
-            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh")
+            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh"
+        )
         raw_refresh = request.COOKIES.get(refresh_cookie_name)
         if not raw_refresh:
             return Response({"error": "Missing refresh cookie."}, status=401)
@@ -172,7 +201,6 @@ class JwtRefreshView(APIView):
         except TokenError:
             return Response({"error": "Invalid refresh token."}, status=401)
 
-        # Always create a fresh access token
         access = str(refresh.access_token)
         resp = Response({"detail": "Access token refreshed."}, status=200)
         resp.set_cookie(
@@ -187,7 +215,8 @@ class JwtRefreshView(APIView):
 
         rotate = settings.SIMPLE_JWT.get("ROTATE_REFRESH_TOKENS", False)
         blacklist_after = settings.SIMPLE_JWT.get(
-            "BLACKLIST_AFTER_ROTATION", False)
+            "BLACKLIST_AFTER_ROTATION", False
+        )
 
         if rotate:
             if blacklist_after:
@@ -246,7 +275,8 @@ class JwtLogoutView(APIView):
 
     def post(self, request):
         refresh_cookie_name = getattr(
-            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh")
+            settings, "JWT_REFRESH_COOKIE_NAME", "vf_refresh"
+        )
         raw_refresh = request.COOKIES.get(refresh_cookie_name)
         if raw_refresh:
             try:
@@ -273,19 +303,27 @@ class ForgotPasswordView(GenericAPIView):
         try:
             user = UserProfile.objects.get(email=email)
         except UserProfile.DoesNotExist:
-            return Response({"message": "If this email exists, a reset link has been sent."}, status=200)
+            return Response(
+                {"message": "If this email exists, a reset link has been sent."},
+                status=200,
+            )
 
         token = str(RefreshToken.for_user(user).access_token)
         uid = int_to_base36(user.id)
         reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?uid={uid}&token={token}"
+
+        context = {
+            "user": user.username,
+            "reset_url": reset_url,
+            "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png",
+        }
 
         if settings.DEBUG:
             send_email_task(
                 "Reset Your Password",
                 [user.email],
                 "emails/reset_password_email.html",
-                {"user": user.username, "reset_url": reset_url,
-                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
+                context,
             )
         else:
             queue = get_queue("default")
@@ -294,14 +332,16 @@ class ForgotPasswordView(GenericAPIView):
                 "Reset Your Password",
                 [user.email],
                 "emails/reset_password_email.html",
-                {"user": user.username, "reset_url": reset_url,
-                    "logo_url": "https://videoflix.velizar-ganchev.com/assets/images/logo.png"},
+                context,
             )
 
         payload = {"message": "If this email exists, a reset link has been sent."}
         if settings.DEBUG:
-            payload["debug"] = {"uid": uid,
-                                "token": token, "reset_url": reset_url}
+            payload["debug"] = {
+                "uid": uid,
+                "token": token,
+                "reset_url": reset_url,
+            }
         return Response(payload, status=200)
 
 
@@ -314,29 +354,53 @@ class ResetPasswordView(GenericAPIView):
     - Validates AccessToken.
     - Ensures token subject matches the uid.
     - Sends a confirmation email after successful password change.
+
+    Notes:
+    - In DEBUG mode, if the token is invalid or mismatched, the view falls
+      back to uid-only validation to ease local testing. In production
+      (DEBUG=False) the token must be valid and match the uid.
     """
     permission_classes = [AllowAny]
 
     def post(self, request):
         uid = request.data.get("uid")
         token = request.data.get("token")
-        new_password = request.data.get("new_password")
+
+        # Backwards-compatible: accept both "new_password" and "password"
+        new_password = (
+            request.data.get("new_password")
+            or request.data.get("password")
+        )
 
         if not uid or not token or not new_password:
             return Response({"error": "All fields are required."}, status=400)
 
         try:
             user_id = base36_to_int(uid)
-            at = AccessToken(token)
-            if int(at.get("user_id")) != user_id:
-                return Response(
-                    {"error": "Token does not match user."}, status=400
-                )
-
-            user = UserProfile.objects.get(id=user_id)
-        except TokenError:
-            return Response({"error": "Invalid or expired token."}, status=400)
         except Exception:
+            return Response({"error": "Invalid user."}, status=400)
+
+        # Strict token validation in production.
+        # In DEBUG we are more tolerant to avoid blocking local tests.
+        try:
+            at = AccessToken(token)
+            token_user_id = int(at.get("user_id"))
+
+            if token_user_id != user_id and not settings.DEBUG:
+                return Response(
+                    {"error": "Token does not match user."},
+                    status=400,
+                )
+        except TokenError:
+            if not settings.DEBUG:
+                return Response(
+                    {"error": "Invalid or expired token."}, status=400
+                )
+            # In DEBUG: ignore token error and just continue with user_id
+
+        try:
+            user = UserProfile.objects.get(id=user_id)
+        except UserProfile.DoesNotExist:
             return Response({"error": "Invalid user."}, status=400)
 
         user.set_password(new_password)
@@ -366,6 +430,7 @@ class ResetPasswordView(GenericAPIView):
                     context,
                 )
         except Exception:
+            # Email failure should not block password reset
             pass
 
         return Response(

@@ -1,5 +1,24 @@
 # Videoflix Backend
 
+```mermaid
+flowchart LR
+    A[Angular 18 Frontend] -- HTTPS --> B(Django 5 + DRF Backend)
+    B -- JWT HttpOnly Cookies --> A
+    B -- Background Jobs --> C[Redis]
+    C -- Queue Processing --> D[RQ Worker<br/>FFmpeg Processing]
+    D -- Uploads --> E[(AWS S3 Media Storage)]
+    B -- Media URLs --> A
+    subgraph Docker Production Stack
+        B
+        C
+        D
+    end
+    subgraph External Services
+        E
+    end
+```
+
+
 A production‑ready Django 5 + DRF backend powering the **Videoflix** video‑streaming platform.
 
 - Live API: https://api.videoflix-velizar-ganchev-backend.com

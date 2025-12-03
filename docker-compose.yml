@@ -81,7 +81,7 @@ services:
     entrypoint: >
       sh -c "certbot certonly --webroot -w /var/www/certbot
       --email ganchev.veli@gmail.com --agree-tos --no-eff-email
-      -d api.videoflix-velizar-ganchev-backend.com"
+      -d api.videoflix.velizar-ganchev.com"
 
   certbot_renew:
     image: certbot/certbot

@@ -21,7 +21,7 @@ flowchart LR
 
 A production‑ready Django 5 + DRF backend powering the **Videoflix** video‑streaming platform.
 
-- Live API: https://api.videoflix-velizar-ganchev-backend.com
+- Live API: https://api.videoflix.velizar-ganchev.com
 - Frontend (Angular 18): https://github.com/velizarganchev/videoflix-frontend
 
 ---

@@ -23,3 +23,11 @@ build
 # Docker
 docker-compose*.yml
 .DS_Store
+
+# Media uploads
+uploads/
+media/
+*.mp4
+*.jpg
+*.jpeg
+*.png

@@ -114,6 +114,9 @@ def _local_convert(src_key: str, height: int, suffix: str) -> str:
     Returns:
         The destination key (relative to MEDIA_ROOT).
     """
+    # Ensure created files are world-readable (nginx must read /media files)
+    os.umask(0o022)
+
     src_abs = _local_src_path(src_key)
     if not os.path.exists(src_abs):
         raise FileNotFoundError(src_abs)
@@ -127,6 +130,9 @@ def _local_convert(src_key: str, height: int, suffix: str) -> str:
     try:
         _ffmpeg(src_abs, tmp_dst, height)
         shutil.move(tmp_dst, dst_abs)
+
+        # Normalize permissions after move (bulletproof)
+        os.chmod(dst_abs, 0o644)
     finally:
         try:
             if os.path.exists(tmp_dst):
@@ -358,6 +364,7 @@ def generate_thumbnail_task(src_key: str, time_sec: float = 1.0) -> None:
         else:
             dst_abs = _local_dst_path(thumb_key)
             shutil.move(tmp_thumb, dst_abs)
+            os.chmod(dst_abs, 0o644)
 
         # Update Video model:
         # - point to the thumbnail
